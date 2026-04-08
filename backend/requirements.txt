@@ -1,0 +1,7 @@
+flask
+requests
+pymongo
+google-cloud-dialogflow
+flask-cors
+gunicorn
+google-generativeai

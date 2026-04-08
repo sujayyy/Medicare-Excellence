@@ -1,0 +1,78 @@
+{
+  "id": "b5311708-5d7a-49df-8824-07883ca1d920",
+  "name": "PatientDetails",
+  "auto": true,
+  "contexts": [],
+  "responses": [
+    {
+      "resetContexts": false,
+      "action": "",
+      "affectedContexts": [],
+      "parameters": [
+        {
+          "id": "269c2cbf-3da6-4736-ab98-a1bd0942f987",
+          "name": "patient_age",
+          "required": true,
+          "dataType": "@sys.number",
+          "value": "$patient_age",
+          "defaultValue": "",
+          "isList": false,
+          "prompts": [],
+          "promptMessages": [],
+          "noMatchPromptMessages": [],
+          "noInputPromptMessages": [],
+          "outputDialogContexts": []
+        },
+        {
+          "id": "723d371d-309f-4207-9b48-cf0a67386246",
+          "name": "patient_contact",
+          "required": true,
+          "dataType": "@sys.phone-number",
+          "value": "$patient_contact",
+          "defaultValue": "",
+          "isList": false,
+          "prompts": [],
+          "promptMessages": [],
+          "noMatchPromptMessages": [],
+          "noInputPromptMessages": [],
+          "outputDialogContexts": []
+        },
+        {
+          "id": "628ca81e-260c-47e2-a86c-73362d804730",
+          "name": "patient_name",
+          "required": true,
+          "dataType": "@sys.person",
+          "value": "$patient_name",
+          "defaultValue": "",
+          "isList": false,
+          "prompts": [],
+          "promptMessages": [],
+          "noMatchPromptMessages": [],
+          "noInputPromptMessages": [],
+          "outputDialogContexts": []
+        }
+      ],
+      "messages": [
+        {
+          "type": "0",
+          "title": "",
+          "textToSpeech": "",
+          "lang": "en",
+          "speech": [
+            "Thank you,booked appointment"
+          ],
+          "condition": ""
+        }
+      ],
+      "speech": []
+    }
+  ],
+  "priority": 500000,
+  "webhookUsed": true,
+  "webhookForSlotFilling": false,
+  "fallbackIntent": false,
+  "events": [],
+  "conditionalResponses": [],
+  "condition": "",
+  "conditionalFollowupEvents": []
+}

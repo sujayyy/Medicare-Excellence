@@ -1,0 +1,78 @@
+{
+  "id": "1f4f724b-964b-4881-973f-fac0c2ee55f8",
+  "name": "EmergencyResponse",
+  "auto": true,
+  "contexts": [],
+  "responses": [
+    {
+      "resetContexts": false,
+      "action": "",
+      "affectedContexts": [],
+      "parameters": [
+        {
+          "id": "8246b786-9334-4d1b-aba0-28982bde469c",
+          "name": "Condition",
+          "required": false,
+          "dataType": "@emergencytype",
+          "value": "$Condition",
+          "defaultValue": "",
+          "isList": false,
+          "prompts": [],
+          "promptMessages": [],
+          "noMatchPromptMessages": [],
+          "noInputPromptMessages": [],
+          "outputDialogContexts": []
+        },
+        {
+          "id": "9b412696-9300-4792-aa37-f59299a590b9",
+          "name": "Location",
+          "required": false,
+          "dataType": "@sys.geo-city",
+          "value": "$Location",
+          "defaultValue": "",
+          "isList": false,
+          "prompts": [],
+          "promptMessages": [],
+          "noMatchPromptMessages": [],
+          "noInputPromptMessages": [],
+          "outputDialogContexts": []
+        },
+        {
+          "id": "d56aa7d1-124d-4e29-9d6e-9db448d8ea74",
+          "name": "Phonenumber",
+          "required": false,
+          "dataType": "@sys.phone-number",
+          "value": "$Phonenumber",
+          "defaultValue": "",
+          "isList": false,
+          "prompts": [],
+          "promptMessages": [],
+          "noMatchPromptMessages": [],
+          "noInputPromptMessages": [],
+          "outputDialogContexts": []
+        }
+      ],
+      "messages": [
+        {
+          "type": "0",
+          "title": "",
+          "textToSpeech": "",
+          "lang": "en",
+          "speech": [
+            "The ambulance equipped with necessary medicines is on the way."
+          ],
+          "condition": ""
+        }
+      ],
+      "speech": []
+    }
+  ],
+  "priority": 500000,
+  "webhookUsed": false,
+  "webhookForSlotFilling": false,
+  "fallbackIntent": false,
+  "events": [],
+  "conditionalResponses": [],
+  "condition": "",
+  "conditionalFollowupEvents": []
+}

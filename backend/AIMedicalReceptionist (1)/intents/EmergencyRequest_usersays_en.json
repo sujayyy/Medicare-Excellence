@@ -1,0 +1,28 @@
+[
+  {
+    "id": "c0ea7a72-877c-492d-89b3-fd5d80e39a65",
+    "data": [
+      {
+        "text": "Emergency situation",
+        "userDefined": false
+      }
+    ],
+    "isTemplate": false,
+    "count": 0,
+    "lang": "en",
+    "updated": 0
+  },
+  {
+    "id": "217cbaa4-573e-488a-a1da-6074aa03be05",
+    "data": [
+      {
+        "text": "Its urgent",
+        "userDefined": false
+      }
+    ],
+    "isTemplate": false,
+    "count": 0,
+    "lang": "en",
+    "updated": 0
+  }
+]

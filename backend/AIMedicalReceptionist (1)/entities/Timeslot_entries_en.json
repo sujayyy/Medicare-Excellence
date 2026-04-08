@@ -1,0 +1,37 @@
+[
+  {
+    "value": "10:00 AM - 11:00 AM",
+    "synonyms": [
+      "10:00 AM - 11:00 AM",
+      "10 to 11 AM",
+      "10 AM to 11 AM",
+      "10:00 to 11:00 AM"
+    ]
+  },
+  {
+    "value": "11:00 AM - 12:00 PM",
+    "synonyms": [
+      "11:00 AM - 12:00 PM",
+      "11 to 12 PM",
+      "11 AM to 12 PM",
+      "11:00 to 12:00 PM"
+    ]
+  },
+  {
+    "value": "12:00 PM - 1:00 PM",
+    "synonyms": [
+      "12:00 PM - 1:00 PM",
+      "12 to 1 PM",
+      "12 PM to 1 PM",
+      "12:00 to 1:00 PM"
+    ]
+  },
+  {
+    "value": "09:00 AM - 10:00 AM",
+    "synonyms": [
+      "09:00 AM - 10:00 AM",
+      "9 to 10 AM",
+      "9:00 to 10:00 AM"
+    ]
+  }
+]

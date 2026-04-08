@@ -1,0 +1,9 @@
+{
+  "id": "acaec23a-2c7c-4cca-be9a-e6355ac0e3e5",
+  "name": "emergencytype",
+  "isOverridable": true,
+  "isEnum": false,
+  "isRegexp": false,
+  "automatedExpansion": false,
+  "allowFuzzyExtraction": false
+}

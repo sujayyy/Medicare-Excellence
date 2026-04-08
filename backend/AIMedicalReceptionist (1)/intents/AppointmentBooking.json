@@ -1,0 +1,64 @@
+{
+  "id": "d24278e6-23f8-4743-b0b8-e514b5bd8fa2",
+  "name": "AppointmentBooking",
+  "auto": true,
+  "contexts": [],
+  "responses": [
+    {
+      "resetContexts": false,
+      "action": "book_appointment",
+      "affectedContexts": [],
+      "parameters": [
+        {
+          "id": "be5fa938-ebc9-4b5e-b764-b94374bd7bc3",
+          "name": "Doctor_Name",
+          "required": false,
+          "dataType": "@Doctor_Name",
+          "value": "$Doctor_Name",
+          "defaultValue": "",
+          "isList": false,
+          "prompts": [],
+          "promptMessages": [],
+          "noMatchPromptMessages": [],
+          "noInputPromptMessages": [],
+          "outputDialogContexts": []
+        },
+        {
+          "id": "d7817bc8-315b-43e0-97b8-2e475d23d9ea",
+          "name": "Timeslot",
+          "required": false,
+          "dataType": "@Timeslot",
+          "value": "$Timeslot",
+          "defaultValue": "",
+          "isList": false,
+          "prompts": [],
+          "promptMessages": [],
+          "noMatchPromptMessages": [],
+          "noInputPromptMessages": [],
+          "outputDialogContexts": []
+        }
+      ],
+      "messages": [
+        {
+          "type": "0",
+          "title": "",
+          "textToSpeech": "",
+          "lang": "en",
+          "speech": [
+            "Sure! Your appointment for $Doctor_Name.original for $date-period.original at $time.original is booked."
+          ],
+          "condition": ""
+        }
+      ],
+      "speech": []
+    }
+  ],
+  "priority": 500000,
+  "webhookUsed": true,
+  "webhookForSlotFilling": false,
+  "fallbackIntent": false,
+  "events": [],
+  "conditionalResponses": [],
+  "condition": "",
+  "conditionalFollowupEvents": []
+}

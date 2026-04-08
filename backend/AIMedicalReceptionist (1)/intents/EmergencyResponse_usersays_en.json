@@ -1,0 +1,86 @@
+[
+  {
+    "id": "6f389a39-7243-425b-aac4-f711fb060e43",
+    "data": [
+      {
+        "text": "phonenumber",
+        "meta": "@sys.phone-number",
+        "alias": "Phonenumber",
+        "userDefined": true
+      }
+    ],
+    "isTemplate": false,
+    "count": 0,
+    "lang": "en",
+    "updated": 0
+  },
+  {
+    "id": "77b54643-cd25-4281-ad78-2670d2e293b7",
+    "data": [
+      {
+        "text": "location",
+        "meta": "@sys.geo-city",
+        "alias": "Location",
+        "userDefined": true
+      }
+    ],
+    "isTemplate": false,
+    "count": 0,
+    "lang": "en",
+    "updated": 0
+  },
+  {
+    "id": "cf7c19bf-f3f6-4929-891c-60f6ebc16796",
+    "data": [
+      {
+        "text": "emergencytype",
+        "meta": "@emergencytype",
+        "alias": "Condition",
+        "userDefined": true
+      }
+    ],
+    "isTemplate": false,
+    "count": 0,
+    "lang": "en",
+    "updated": 0
+  },
+  {
+    "id": "e6cb1e31-7842-4178-a424-571a4823ade8",
+    "data": [
+      {
+        "text": "Collapse",
+        "userDefined": false
+      }
+    ],
+    "isTemplate": false,
+    "count": 0,
+    "lang": "en",
+    "updated": 0
+  },
+  {
+    "id": "546b5193-1e0a-4a46-80ff-3489f42e8f2d",
+    "data": [
+      {
+        "text": "Heartattack",
+        "userDefined": false
+      }
+    ],
+    "isTemplate": false,
+    "count": 0,
+    "lang": "en",
+    "updated": 0
+  },
+  {
+    "id": "40d6ffed-916f-4b0b-9f8c-17f80b0ef2fa",
+    "data": [
+      {
+        "text": "Severe-heart issue",
+        "userDefined": false
+      }
+    ],
+    "isTemplate": false,
+    "count": 0,
+    "lang": "en",
+    "updated": 0
+  }
+]

@@ -1,0 +1,9 @@
+{
+  "id": "26ee5255-dd46-4a79-9ff3-3d2c085fe23c",
+  "name": "Timeslot",
+  "isOverridable": true,
+  "isEnum": false,
+  "isRegexp": false,
+  "automatedExpansion": false,
+  "allowFuzzyExtraction": false
+}

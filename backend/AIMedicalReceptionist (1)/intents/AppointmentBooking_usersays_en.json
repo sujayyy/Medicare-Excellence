@@ -1,0 +1,57 @@
+[
+  {
+    "id": "fda1b49f-6015-48a3-8cd1-b080ace99424",
+    "data": [
+      {
+        "text": "I want to book an appointment of ",
+        "userDefined": false
+      },
+      {
+        "text": "Doctor_Name",
+        "meta": "@Doctor_Name",
+        "alias": "Doctor_Name",
+        "userDefined": true
+      },
+      {
+        "text": " at ",
+        "userDefined": false
+      },
+      {
+        "text": "Time",
+        "meta": "@Timeslot",
+        "alias": "Timeslot",
+        "userDefined": true
+      }
+    ],
+    "isTemplate": false,
+    "count": 0,
+    "lang": "en",
+    "updated": 0
+  },
+  {
+    "id": "4fd04c12-1a54-4685-a55a-04df329dbeb9",
+    "data": [
+      {
+        "text": "Can I schedule a visit?",
+        "userDefined": false
+      }
+    ],
+    "isTemplate": false,
+    "count": 0,
+    "lang": "en",
+    "updated": 0
+  },
+  {
+    "id": "f9a391fc-47fe-4263-b53f-dae58c89de15",
+    "data": [
+      {
+        "text": "I want to book an appointment.",
+        "userDefined": false
+      }
+    ],
+    "isTemplate": false,
+    "count": 0,
+    "lang": "en",
+    "updated": 0
+  }
+]

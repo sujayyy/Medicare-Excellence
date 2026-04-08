@@ -1,0 +1,119 @@
+[
+  {
+    "id": "376ce4df-d5cf-448f-88da-6c9e0acb0617",
+    "data": [
+      {
+        "text": "The details are ",
+        "userDefined": false
+      },
+      {
+        "text": "patient_name",
+        "meta": "@sys.person",
+        "alias": "patient_name",
+        "userDefined": true
+      },
+      {
+        "text": ",  ",
+        "userDefined": false
+      },
+      {
+        "text": "patient_age",
+        "meta": "@sys.number",
+        "alias": "patient_age",
+        "userDefined": true
+      },
+      {
+        "text": ",  ",
+        "userDefined": false
+      },
+      {
+        "text": "patient_contact",
+        "meta": "@sys.phone-number",
+        "alias": "patient_contact",
+        "userDefined": true
+      }
+    ],
+    "isTemplate": false,
+    "count": 0,
+    "lang": "en",
+    "updated": 0
+  },
+  {
+    "id": "33113817-cabf-43f4-83a4-9023326b6907",
+    "data": [
+      {
+        "text": "The details of patient are   ",
+        "userDefined": false
+      },
+      {
+        "text": "patient_name",
+        "meta": "@sys.person",
+        "alias": "patient_name",
+        "userDefined": true
+      },
+      {
+        "text": ": Age - ",
+        "userDefined": false
+      },
+      {
+        "text": "patient_age",
+        "meta": "@sys.number",
+        "alias": "patient_age",
+        "userDefined": true
+      },
+      {
+        "text": ", Contact - ",
+        "userDefined": false
+      },
+      {
+        "text": "patient_contact",
+        "meta": "@sys.phone-number",
+        "alias": "patient_contact",
+        "userDefined": true
+      }
+    ],
+    "isTemplate": false,
+    "count": 0,
+    "lang": "en",
+    "updated": 0
+  },
+  {
+    "id": "b9cf1671-e545-4751-b6e9-284a6b0627db",
+    "data": [
+      {
+        "text": "PatientName: ",
+        "userDefined": false
+      },
+      {
+        "text": "patient_name",
+        "meta": "@sys.person",
+        "alias": "patient_name",
+        "userDefined": true
+      },
+      {
+        "text": ", PatientContact: ",
+        "userDefined": false
+      },
+      {
+        "text": "patient_contact",
+        "meta": "@sys.phone-number",
+        "alias": "patient_contact",
+        "userDefined": true
+      },
+      {
+        "text": ", PatientAge: ",
+        "userDefined": false
+      },
+      {
+        "text": "patient_age",
+        "meta": "@sys.number",
+        "alias": "patient_age",
+        "userDefined": true
+      }
+    ],
+    "isTemplate": false,
+    "count": 0,
+    "lang": "en",
+    "updated": 0
+  }
+]
