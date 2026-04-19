@@ -7,6 +7,16 @@ SPECIALTY_LABELS = {
     "pulmonology": "Pulmonology",
     "neurology": "Neurology",
     "endocrinology": "Endocrinology",
+    "dermatology": "Dermatology",
+    "orthopedics": "Orthopedics",
+    "pediatrics": "Pediatrics",
+    "psychiatry": "Psychiatry",
+    "ent": "ENT",
+    "gynecology": "Gynecology",
+    "gastroenterology": "Gastroenterology",
+    "nephrology": "Nephrology",
+    "oncology": "Oncology",
+    "ophthalmology": "Ophthalmology",
 }
 
 
@@ -66,7 +76,17 @@ def infer_specialty(*, user_message: str = "", entities: Optional[dict[str, Any]
         ]
     ).lower()
 
-    for specialty, patterns in SPECIALTY_PATTERNS.items():
-        if any(pattern in haystack for pattern in patterns):
-            return specialty
-    return "general_medicine"
+    scores = {
+        specialty: sum(1 for pattern in patterns if pattern in haystack)
+        for specialty, patterns in SPECIALTY_PATTERNS.items()
+    }
+
+    if scores["neurology"] > 0 and scores["cardiology"] == 0:
+        return "neurology"
+    if scores["pulmonology"] > 0 and scores["cardiology"] == 0:
+        return "pulmonology"
+
+    best_specialty = max(scores, key=scores.get)
+    if scores[best_specialty] <= 0:
+        return "general_medicine"
+    return best_specialty

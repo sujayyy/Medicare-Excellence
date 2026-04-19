@@ -3,28 +3,28 @@ from typing import Any
 
 FOLLOW_UP_RULES = {
     "chest pain": [
-        "When did the chest pain start, and is it constant or intermittent?",
+        "When did the chest pain start?",
         "Does the pain spread to your arm, back, jaw, or shoulder?",
-        "Do you feel sweating, dizziness, or nausea along with it?",
+        "Are you also having sweating, dizziness, or nausea?",
     ],
     "shortness of breath": [
-        "Did the breathing difficulty start suddenly or build up gradually?",
+        "Did the breathing trouble start suddenly or build up gradually?",
         "Is it worse when walking, lying down, or speaking?",
-        "Have you had wheezing, chest tightness, or a recent fever?",
+        "Do you also have wheezing, chest tightness, or fever?",
     ],
     "fever": [
         "What temperature have you recorded, if any?",
-        "Have you had chills, body aches, or exposure to anyone ill recently?",
+        "Have you also had chills or body aches?",
         "How many days has the fever been present?",
     ],
     "headache": [
-        "Is the headache one-sided, pressure-like, or the worst headache you have had?",
-        "Do you have sensitivity to light, nausea, or vision changes?",
-        "Did it begin suddenly or gradually?",
+        "Did the headache begin suddenly or gradually?",
+        "Do you also have nausea, light sensitivity, or vision changes?",
+        "Is this the worst headache you have had?",
     ],
     "cough": [
-        "Is the cough dry or producing mucus?",
-        "Have you noticed fever, sore throat, or shortness of breath with it?",
+        "Is the cough dry or bringing up mucus?",
+        "Do you also have fever, sore throat, or shortness of breath?",
         "How long has the cough been going on?",
     ],
     "back pain": [
@@ -63,10 +63,10 @@ def generate_follow_up_questions(
             "Have you taken any medication or checked any vitals related to this issue?",
         ]
 
-    return questions[:3]
+    return questions[:2]
 
 
 def get_follow_up_intro(*, emergency: bool = False) -> str:
     if emergency:
-        return "If you can answer safely while getting help, these details may be useful:"
-    return "A few quick questions that would help narrow this down:"
+        return "If you can answer safely while getting help, these details would help the care team:"
+    return "To guide you better, please tell me:"

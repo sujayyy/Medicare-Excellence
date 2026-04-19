@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any, Optional
 
 from models.base import serialize_document, utc_now
@@ -16,10 +17,31 @@ def ensure_patient_indexes() -> None:
     _collection().create_index("updated_at")
 
 
+def calculate_age_from_dob(dob_value: Optional[str]) -> Optional[int]:
+    if not dob_value:
+        return None
+
+    try:
+        dob = datetime.strptime(str(dob_value)[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+    today = utc_now().date()
+    age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+    if age < 0 or age > 120:
+        return None
+    return age
+
+
 def create_or_update_patient_profile(user: dict[str, Any]) -> Optional[dict[str, Any]]:
     if not user or user.get("role") != "patient":
         return None
 
+    existing_profile = get_patient_by_user_id(str(user["_id"])) or {}
+    patient_dob = user.get("dob") or existing_profile.get("dob") or ""
+    patient_phone = user.get("phone") or existing_profile.get("phone") or ""
+    patient_gender = user.get("gender") or existing_profile.get("gender") or ""
+    patient_age = calculate_age_from_dob(patient_dob) or existing_profile.get("age")
     now = utc_now()
     _collection().update_one(
         {"user_id": str(user["_id"])},
@@ -42,6 +64,8 @@ def create_or_update_patient_profile(user: dict[str, Any]) -> Optional[dict[str,
                 "extracted_entities_updated_at": now,
                 "status": "Active",
                 "appointment_intake_pending": False,
+                "appointment_intake_stage": "",
+                "appointment_intake_data": {},
                 "assigned_doctor_id": None,
                 "assigned_doctor_name": "",
                 "assigned_doctor_specialty": "",
@@ -71,8 +95,7 @@ def create_or_update_patient_profile(user: dict[str, Any]) -> Optional[dict[str,
                 "prediction_next_check_at": now,
                 "prediction_updated_at": now,
                 "last_summary": "",
-                "phone": "",
-                "age": None,
+                "visit_history": [],
                 "last_engagement_at": now,
             },
             "$set": {
@@ -80,6 +103,10 @@ def create_or_update_patient_profile(user: dict[str, Any]) -> Optional[dict[str,
                 "hospital_id": user.get("hospital_id"),
                 "name": user["name"],
                 "email": user["email"],
+                "phone": patient_phone,
+                "dob": patient_dob,
+                "gender": patient_gender,
+                "age": patient_age,
                 "updated_at": now,
                 "last_interaction_at": now,
             },
@@ -112,9 +139,13 @@ def create_guest_patient_from_message(details: dict[str, Any]) -> None:
             "email": details.get("email") or "",
             "hospital_id": details.get("hospital_id"),
             "phone": details.get("phone") or "",
+            "dob": details.get("dob") or "",
+            "gender": details.get("gender") or "",
             "age": details.get("age"),
             "status": "Appointment requested",
             "appointment_intake_pending": False,
+            "appointment_intake_stage": "",
+            "appointment_intake_data": {},
             "risk_level": "Medium",
             "triage_score": 30,
             "triage_label": "Low",
@@ -164,6 +195,7 @@ def create_guest_patient_from_message(details: dict[str, Any]) -> None:
             "appointments_requested": 1,
             "emergency_count": 0,
             "last_summary": details.get("raw_text", ""),
+            "visit_history": [],
             "last_interaction_at": now,
             "last_engagement_at": now,
             "created_at": now,
@@ -181,3 +213,31 @@ def list_patients(*, hospital_id: Optional[str] = None, assigned_doctor_id: Opti
 
     patients = _collection().find(query).sort("updated_at", -1)
     return [serialize_document(patient) for patient in patients]
+
+
+def upsert_visit_history_entry(user_id: str, visit_entry: dict[str, Any]) -> None:
+    if not user_id or not visit_entry:
+        return
+
+    patient = get_patient_by_user_id(user_id) or {}
+    existing_history = list(patient.get("visit_history") or [])
+    appointment_id = visit_entry.get("appointment_id")
+
+    next_history = [entry for entry in existing_history if entry.get("appointment_id") != appointment_id]
+    next_history.insert(0, visit_entry)
+    next_history.sort(key=lambda entry: entry.get("completed_at") or entry.get("created_at") or "", reverse=True)
+
+    now = utc_now()
+    _collection().update_one(
+        {"user_id": user_id},
+        {
+            "$set": {
+                "visit_history": next_history[:20],
+                "updated_at": now,
+                "last_interaction_at": now,
+                "last_engagement_at": now,
+            },
+            "$setOnInsert": {"created_at": now},
+        },
+        upsert=True,
+    )

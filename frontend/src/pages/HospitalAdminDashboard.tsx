@@ -1,6 +1,7 @@
 import { format } from "date-fns";
+import { motion } from "framer-motion";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, AlertTriangle, BellRing, CalendarClock, Copy, FileText, HeartPulse, MessagesSquare, Users } from "lucide-react";
+import { Activity, AlertTriangle, BellRing, CalendarClock, Copy, Download, FileText, HeartPulse, MessagesSquare, Users } from "lucide-react";
 
 import DashboardLayout from "@/components/DashboardLayout";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -17,10 +18,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useAuth } from "@/context/AuthContext";
-import { acknowledgeAlert, ApiError, getDocuments, getEmergencies, getPatients, getStats, getVitals } from "@/lib/api";
+import { acknowledgeAlert, ApiError, downloadDocumentFile, getAppointments, getDocuments, getEmergencies, getPatients, getStats, getVitals } from "@/lib/api";
 import { useLiveAlertNotifications } from "@/hooks/useLiveAlertNotifications";
 import { useToast } from "@/hooks/use-toast";
-import type { DocumentRecord, PatientRecord, VitalRecord } from "@/types/api";
+import type { AppointmentRecord, DocumentRecord, PatientRecord, VitalRecord } from "@/types/api";
 
 function formatDate(value?: string) {
   if (!value) {
@@ -68,8 +69,14 @@ function compactList(values?: string[]) {
   return values && values.length > 0 ? values.join(", ") : "Not extracted yet";
 }
 
+function isOperationalAppointmentOnly(patient: PatientRecord) {
+  const status = (patient.status || "").toLowerCase();
+  return status.includes("appointment") && (!patient.symptoms || patient.symptoms.length === 0) && (!patient.red_flags || patient.red_flags.length === 0);
+}
+
 function getSummaryPatients(patients: PatientRecord[]) {
   return [...patients]
+    .filter((patient) => !isOperationalAppointmentOnly(patient))
     .filter((patient) => patient.summary_headline || patient.soap_summary || patient.clinical_summary)
     .slice(0, 4);
 }
@@ -125,6 +132,12 @@ export default function HospitalAdminDashboard() {
     enabled: Boolean(token),
   });
 
+  const appointmentsQuery = useQuery({
+    queryKey: ["hospital-admin-appointments"],
+    queryFn: () => getAppointments(token || ""),
+    enabled: Boolean(token),
+  });
+
   const { alertsQuery, alerts, liveAlert } = useLiveAlertNotifications({
     token: token || "",
     queryKey: ["hospital-admin-alerts"],
@@ -156,8 +169,34 @@ export default function HospitalAdminDashboard() {
   const emergencies = emergenciesQuery.data?.emergencies || [];
   const documents = documentsQuery.data?.documents || [];
   const vitals = vitalsQuery.data?.vitals || [];
+  const appointments = appointmentsQuery.data?.appointments || [];
   const summaryPatients = getSummaryPatients(patients);
   const prioritySchedulingPatients = getPrioritySchedulingPatients(patients);
+  const doctorPerformance = Object.values(
+    appointments.reduce<Record<string, { doctor: string; total: number; completed: number }>>((accumulator, appointment) => {
+      const key = appointment.assigned_doctor_id || appointment.assigned_doctor_name || "unassigned";
+      if (!accumulator[key]) {
+        accumulator[key] = {
+          doctor: appointment.assigned_doctor_name || "Unassigned",
+          total: 0,
+          completed: 0,
+        };
+      }
+      accumulator[key].total += 1;
+      if ((appointment.status || "").toLowerCase() === "completed") {
+        accumulator[key].completed += 1;
+      }
+      return accumulator;
+    }, {}),
+  );
+  const fadeUp = {
+    hidden: { opacity: 0, y: 18 },
+    visible: (index: number) => ({
+      opacity: 1,
+      y: 0,
+      transition: { delay: index * 0.06, duration: 0.35, ease: "easeOut" as const },
+    }),
+  };
 
   const copyClinicalNote = async (patient: PatientRecord) => {
     const note =
@@ -190,21 +229,53 @@ export default function HospitalAdminDashboard() {
     }
   };
 
+  const handleDocumentDownload = async (document: DocumentRecord) => {
+    if (!token) {
+      return;
+    }
+
+    try {
+      const fileBlob = await downloadDocumentFile(token, document.id);
+      const downloadUrl = URL.createObjectURL(fileBlob);
+      const link = window.document.createElement("a");
+      link.href = downloadUrl;
+      link.download = document.file_name || `${document.title}.bin`;
+      window.document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(downloadUrl);
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Unable to download file",
+        description: error instanceof ApiError ? error.message : "Please try again.",
+      });
+    }
+  };
+
   return (
     <DashboardLayout>
-      <div className="space-y-6">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <h1 className="font-display text-2xl font-bold text-foreground sm:text-3xl">Hospital Operations Dashboard</h1>
-            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-              Live analytics, hospital-wide patient records, and escalations for {user?.name}.
-            </p>
+      <motion.div initial="hidden" animate="visible" className="space-y-6">
+        <motion.div variants={fadeUp} custom={0} className="dashboard-hero rounded-[2rem] px-6 py-6 sm:px-7">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <div className="inline-flex items-center gap-2 rounded-full border border-white/80 bg-white/70 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.22em] text-muted-foreground shadow-sm">
+                <Activity className="h-3.5 w-3.5 text-primary" />
+                Hospital Operations
+              </div>
+              <h1 className="mt-4 font-display text-3xl font-semibold tracking-[-0.04em] text-foreground sm:text-[2.35rem]">
+                Hospital Operations Dashboard
+              </h1>
+              <p className="mt-2 max-w-2xl text-sm leading-7 text-muted-foreground">
+                Live analytics, hospital-wide patient records, and escalations for {user?.name}.
+              </p>
+            </div>
+            <Badge variant="secondary">Hospital Admin Access</Badge>
           </div>
-          <Badge variant="secondary">Hospital Admin Access</Badge>
-        </div>
+        </motion.div>
 
         {error && (
-          <Alert variant="destructive">
+          <Alert variant="destructive" className="cinematic-alert">
             <AlertDescription>
               {error instanceof ApiError ? error.message : "Unable to load the hospital dashboard right now."}
             </AlertDescription>
@@ -212,7 +283,7 @@ export default function HospitalAdminDashboard() {
         )}
 
         {liveAlert && (
-          <Alert variant={liveAlert.severity === "high" || liveAlert.severity === "critical" ? "destructive" : "default"}>
+          <Alert className="cinematic-alert" variant={liveAlert.severity === "high" || liveAlert.severity === "critical" ? "destructive" : "default"}>
             <AlertDescription className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="font-medium">Live escalation: {liveAlert.title}</p>
@@ -225,7 +296,7 @@ export default function HospitalAdminDashboard() {
           </Alert>
         )}
 
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <motion.div variants={fadeUp} custom={1} className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           {[
             { label: "Total Patients", value: stats?.totalPatients ?? 0, icon: Users },
             { label: "Open Emergencies", value: stats?.openEmergencies ?? 0, icon: AlertTriangle },
@@ -233,7 +304,7 @@ export default function HospitalAdminDashboard() {
             { label: "Active Chats", value: stats?.activeChats ?? 0, icon: MessagesSquare },
             { label: "Appointment Requests", value: stats?.appointmentRequests ?? 0, icon: CalendarClock },
           ].map((item) => (
-            <Card key={item.label} className="border-border/60 bg-card/95 shadow-card">
+            <Card key={item.label} className="metric-card metric-card-hover border-white/70 bg-card/95 shadow-card">
               <CardContent className="flex items-center gap-4 p-5">
                 <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent">
                   <item.icon className="h-5 w-5 text-primary" />
@@ -245,7 +316,75 @@ export default function HospitalAdminDashboard() {
               </CardContent>
             </Card>
           ))}
-        </div>
+        </motion.div>
+
+        <motion.div variants={fadeUp} custom={2} className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+          <Card className="premium-section shadow-card">
+            <CardHeader className="flex flex-row items-center justify-between">
+              <CardTitle className="font-display text-lg">Hospital Appointment Flow</CardTitle>
+              <Badge variant="outline">{appointments.length} total bookings</Badge>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {appointments.length === 0 && (
+                <p className="text-sm text-muted-foreground">Doctor-linked appointments will appear here once patients start booking them.</p>
+              )}
+              {appointments.slice(0, 6).map((appointment: AppointmentRecord) => (
+                <div key={appointment.id} className="rounded-2xl border border-border/60 p-4">
+                  {(() => {
+                    const linkedVitals = vitals.filter((entry) => entry.appointment_id === appointment.id);
+                    const linkedDocuments = documents.filter((entry) => entry.appointment_id === appointment.id);
+                    return (
+                      <>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="font-medium text-foreground">{appointment.patient_name || "Patient"} · {appointment.assigned_doctor_name || "Unassigned"}</p>
+                      <p className="text-sm text-muted-foreground">
+                        {(appointment.assigned_doctor_specialty || "general_medicine").replace(/_/g, " ").replace(/\b\w/g, (match) => match.toUpperCase())}
+                        {appointment.assigned_doctor_code ? ` · ${appointment.assigned_doctor_code}` : ""}
+                      </p>
+                    </div>
+                    <Badge variant="outline">{appointment.status}</Badge>
+                  </div>
+                  <p className="mt-2 text-sm text-foreground">{appointment.reason || "No reason provided"}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {appointment.appointment_date || "Date pending"} · {appointment.appointment_time || "Time pending"}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Linked clinician records: {linkedVitals.length} vitals · {linkedDocuments.length} documents
+                  </p>
+                  {(appointment.diagnosis_summary || appointment.prescription_summary || appointment.vitals_summary) && (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      {appointment.diagnosis_summary || appointment.vitals_summary || appointment.prescription_summary}
+                    </p>
+                  )}
+                      </>
+                    );
+                  })()}
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+
+          <Card className="premium-section shadow-card">
+            <CardHeader className="flex flex-row items-center justify-between">
+              <CardTitle className="font-display text-lg">Doctor Performance Snapshot</CardTitle>
+              <Badge variant="outline">{doctorPerformance.length} doctors</Badge>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {doctorPerformance.length === 0 && (
+                <p className="text-sm text-muted-foreground">Doctor workload will appear here after appointments are created.</p>
+              )}
+              {doctorPerformance.map((entry) => (
+                <div key={entry.doctor} className="rounded-2xl border border-border/60 p-4">
+                  <p className="font-medium text-foreground">{entry.doctor}</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {entry.total} booked patients · {entry.completed} completed consultations
+                  </p>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        </motion.div>
 
         <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
           <Card className="border-border/60 bg-card/95 shadow-elevated">
@@ -409,11 +548,29 @@ export default function HospitalAdminDashboard() {
                           {document.patient_name || "Patient"} {document.assigned_doctor_name ? `· ${document.assigned_doctor_name}` : ""}
                         </p>
                       </div>
-                      <Badge variant={document.review_priority === "Urgent" ? "destructive" : document.review_priority === "Priority" ? "secondary" : "outline"}>
-                        {document.review_priority || "Routine"}
-                      </Badge>
+                      <div className="flex items-center gap-2">
+                        {document.storage_key && (
+                          <Button size="sm" variant="outline" onClick={() => void handleDocumentDownload(document)}>
+                            <Download className="h-3.5 w-3.5" />
+                            Open
+                          </Button>
+                        )}
+                        <Badge variant={document.review_priority === "Urgent" ? "destructive" : document.review_priority === "Priority" ? "secondary" : "outline"}>
+                          {document.review_priority || "Routine"}
+                        </Badge>
+                      </div>
                     </div>
                     <p className="text-sm text-foreground">{document.summary || "No summary available."}</p>
+                    {document.document_type === "prescription" && (document.medication_schedule?.length || 0) > 0 && (
+                      <div className="mt-3 space-y-2 rounded-xl bg-muted/50 p-3">
+                        {(document.medication_schedule || []).slice(0, 3).map((entry) => (
+                          <div key={`${document.id}-${entry.drug_name}`} className="text-xs text-foreground">
+                            <span className="font-medium">{entry.drug_name}</span>
+                            <span className="text-muted-foreground"> · {entry.dosage} · {entry.timing}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     <div className="mt-2 flex flex-wrap gap-2">
                       {(document.extracted_tags || []).map((tag) => (
                         <Badge key={tag} variant="outline">
@@ -580,7 +737,7 @@ export default function HospitalAdminDashboard() {
             </Card>
           </div>
         </div>
-      </div>
+      </motion.div>
     </DashboardLayout>
   );
 }

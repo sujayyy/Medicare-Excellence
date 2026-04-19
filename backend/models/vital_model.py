@@ -12,6 +12,7 @@ def ensure_vital_indexes() -> None:
     _collection().create_index("patient_user_id")
     _collection().create_index("hospital_id")
     _collection().create_index("assigned_doctor_id")
+    _collection().create_index("appointment_id")
     _collection().create_index("created_at")
     _collection().create_index("severity")
 
@@ -33,6 +34,7 @@ def list_vitals(
     hospital_id: Optional[str] = None,
     patient_user_id: Optional[str] = None,
     assigned_doctor_id: Optional[str] = None,
+    appointment_id: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     query: dict[str, Any] = {}
     if hospital_id:
@@ -41,6 +43,8 @@ def list_vitals(
         query["patient_user_id"] = patient_user_id
     if assigned_doctor_id:
         query["assigned_doctor_id"] = assigned_doctor_id
+    if appointment_id:
+        query["appointment_id"] = appointment_id
 
     vitals = _collection().find(query).sort("created_at", -1)
     return [serialize_document(vital) for vital in vitals]

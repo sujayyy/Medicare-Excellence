@@ -7,10 +7,35 @@ export interface AuthUser {
   name: string;
   email: string;
   role: UserRole;
+  email_verified?: boolean;
+  email_verified_at?: string | null;
+  verification_sent_at?: string | null;
   hospital_id?: string;
   specialty?: string | null;
+  doctor_code?: string | null;
+  phone?: string | null;
+  dob?: string | null;
+  gender?: string | null;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface VisitHistoryEntry {
+  appointment_id: string;
+  completed_at?: string;
+  appointment_date?: string;
+  appointment_time?: string;
+  doctor_name?: string;
+  doctor_specialty?: string;
+  doctor_code?: string;
+  visit_reason?: string;
+  consultation_notes?: string;
+  diagnosis_summary?: string;
+  vitals_summary?: string;
+  prescription_summary?: string;
+  scan_summary?: string;
+  follow_up_plan?: string;
+  clinician_updated_by?: string;
 }
 
 export interface PatientProfile {
@@ -20,9 +45,12 @@ export interface PatientProfile {
   assigned_doctor_id?: string | null;
   assigned_doctor_name?: string;
   assigned_doctor_specialty?: string;
+  assigned_doctor_code?: string;
   name: string;
   email: string;
   phone?: string;
+  dob?: string;
+  gender?: string;
   age?: number | null;
   status: string;
   risk_level: string;
@@ -65,6 +93,7 @@ export interface PatientProfile {
   appointments_requested: number;
   emergency_count: number;
   last_summary?: string;
+  visit_history?: VisitHistoryEntry[];
   last_engagement_at?: string;
   last_interaction_at?: string;
   created_at?: string;
@@ -104,10 +133,24 @@ export interface ChatHistoryResponse {
 }
 
 export interface AuthResponse {
-  token: string;
+  token?: string;
   role: UserRole;
-  user: AuthUser;
-  profile: PatientProfile | null;
+  user?: AuthUser | null;
+  profile?: PatientProfile | null;
+  requires_approval?: boolean;
+  requires_verification?: boolean;
+  message?: string;
+  email?: string;
+  preview_url?: string;
+  delivery?: "email" | "preview";
+  request?: DoctorAccessRequest;
+}
+
+export interface BasicMessageResponse {
+  message: string;
+  email?: string;
+  preview_url?: string;
+  delivery?: "email" | "preview";
 }
 
 export interface MeResponse {
@@ -173,6 +216,7 @@ export interface AlertRecord {
 
 export interface DocumentRecord {
   id: string;
+  appointment_id?: string;
   patient_user_id?: string;
   patient_name?: string;
   patient_email?: string;
@@ -187,8 +231,16 @@ export interface DocumentRecord {
   file_name?: string;
   content_type?: string;
   file_size?: number;
+  storage_key?: string;
+  storage_gridfs_file_id?: string;
   content_text?: string;
   summary?: string;
+  prescription_summary?: string;
+  medication_schedule?: Array<{
+    drug_name: string;
+    dosage: string;
+    timing: string;
+  }>;
   extracted_tags?: string[];
   review_priority?: string;
   status?: string;
@@ -198,6 +250,7 @@ export interface DocumentRecord {
 
 export interface VitalRecord {
   id: string;
+  appointment_id?: string;
   patient_user_id?: string;
   patient_name?: string;
   patient_email?: string;
@@ -214,6 +267,64 @@ export interface VitalRecord {
   severity?: string;
   anomaly_flags?: string[];
   summary?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface DoctorRecord {
+  id: string;
+  name: string;
+  email?: string;
+  specialty?: string;
+  specialty_label?: string;
+  doctor_code?: string;
+  hospital_id?: string;
+}
+
+export interface DoctorAccessRequest {
+  id: string;
+  name: string;
+  email: string;
+  requested_role: "doctor";
+  specialty?: string;
+  hospital_id?: string;
+  status: "pending" | "approved" | "rejected";
+  doctor_user_id?: string;
+  doctor_code?: string;
+  approved_by_name?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface AppointmentRecord {
+  id: string;
+  hospital_id?: string;
+  patient_user_id?: string;
+  patient_name?: string;
+  patient_email?: string;
+  patient_phone?: string;
+  patient_age?: number | null;
+  appointment_date?: string;
+  appointment_time?: string;
+  preferred_slot?: string;
+  reason?: string;
+  patient_notes?: string;
+  status: string;
+  requested_specialty?: string;
+  assigned_doctor_id?: string | null;
+  assigned_doctor_name?: string;
+  assigned_doctor_specialty?: string;
+  assigned_doctor_code?: string;
+  consultation_notes?: string;
+  diagnosis_summary?: string;
+  vitals_summary?: string;
+  prescription_summary?: string;
+  scan_summary?: string;
+  follow_up_plan?: string;
+  consultation_started_at?: string | null;
+  completed_at?: string | null;
+  clinician_updated_by?: string;
+  clinician_updated_by_user_id?: string;
   created_at?: string;
   updated_at?: string;
 }

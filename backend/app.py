@@ -11,6 +11,7 @@ def create_app() -> Flask:
     app = Flask(__name__)
     app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY", "medicare-excellence-dev-secret")
     app.config["JSON_SORT_KEYS"] = False
+    app.config["UPLOADS_DIR"] = os.getenv("UPLOADS_DIR", os.path.join(app.root_path, "uploads", "documents"))
 
     CORS(
         app,

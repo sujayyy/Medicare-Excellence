@@ -16,6 +16,11 @@ def _section(title: str, content: str) -> str:
     return f"{title}: {content}"
 
 
+def _is_appointment_only(current_status: str, symptoms: list[str], red_flags: list[str]) -> bool:
+    normalized_status = (current_status or "").lower()
+    return "appointment" in normalized_status and not symptoms and not red_flags
+
+
 def build_patient_summary(
     *,
     patient_name: str,
@@ -38,6 +43,15 @@ def build_patient_summary(
     triage_score = triage.get("triage_score", 0)
     triage_reason = triage.get("triage_reason", "No triage reason available.")
     recommended_action = triage.get("recommended_action", "Continue monitoring.")
+
+    if _is_appointment_only(current_status, symptoms, red_flags):
+        return {
+            "summary_headline": f"{patient_name or 'Patient'} requested appointment scheduling.",
+            "soap_summary": "Scheduling intake has been captured and is awaiting operational follow-up.",
+            "clinical_summary": f"Operational status: {current_status}. No symptom-based clinical note is required for this request.",
+            "escalation_note": "Administrative action: confirm specialty, contact the patient, and schedule the visit.",
+            "clinical_note": "",
+        }
 
     headline = f"{patient_name or 'Patient'} is currently {triage_label.lower()} risk."
     soap_summary = (

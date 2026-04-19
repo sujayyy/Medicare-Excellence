@@ -1,6 +1,7 @@
 from typing import Any
 
 from models.alert_model import create_alert
+from models.appointment_model import get_appointment_by_id, update_appointment_record
 from models.patient_model import get_patient_by_user_id, update_patient_profile
 from models.user_model import DEFAULT_HOSPITAL_ID
 from models.vital_model import create_vital_record, list_vitals
@@ -163,3 +164,74 @@ def get_vital_records(user: dict[str, Any]) -> list[dict]:
     if role == "doctor":
         return list_vitals(hospital_id=user.get("hospital_id"), assigned_doctor_id=str(user["_id"]))
     return list_vitals(hospital_id=user.get("hospital_id"))
+
+
+def create_clinician_vital(payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
+    if user.get("role") not in {"doctor", "hospital_admin"}:
+        raise ValidationError("Only clinicians can record consultation vitals.")
+
+    appointment_id = (payload.get("appointment_id") or "").strip()
+    if not appointment_id:
+        raise ValidationError("Appointment ID is required.")
+
+    appointment = get_appointment_by_id(appointment_id)
+    if not appointment:
+        raise ValidationError("Appointment not found.")
+
+    if user.get("role") == "doctor" and appointment.get("assigned_doctor_id") != str(user["_id"]):
+        raise ValidationError("You can only record vitals for your own appointments.")
+
+    pulse = _to_float(payload.get("pulse"), "Pulse")
+    spo2 = _to_float(payload.get("spo2"), "SpO2")
+    temperature = _to_float(payload.get("temperature"), "Temperature")
+    systolic_bp = _to_float(payload.get("systolic_bp"), "Systolic BP")
+    diastolic_bp = _to_float(payload.get("diastolic_bp"), "Diastolic BP")
+    glucose = _to_float(payload.get("glucose"), "Glucose")
+    notes = (payload.get("notes") or "").strip()
+
+    analysis = _analyze_vitals(
+        pulse=pulse,
+        spo2=spo2,
+        temperature=temperature,
+        systolic_bp=systolic_bp,
+        diastolic_bp=diastolic_bp,
+        glucose=glucose,
+    )
+
+    vital = create_vital_record(
+        {
+            "appointment_id": appointment_id,
+            "patient_user_id": appointment.get("patient_user_id"),
+            "patient_name": appointment.get("patient_name"),
+            "patient_email": appointment.get("patient_email"),
+            "hospital_id": appointment.get("hospital_id"),
+            "assigned_doctor_id": appointment.get("assigned_doctor_id"),
+            "assigned_doctor_name": appointment.get("assigned_doctor_name"),
+            "pulse": pulse,
+            "spo2": spo2,
+            "temperature": temperature,
+            "systolic_bp": systolic_bp,
+            "diastolic_bp": diastolic_bp,
+            "glucose": glucose,
+            "notes": notes,
+            "severity": analysis["severity"],
+            "anomaly_flags": analysis["anomaly_flags"],
+            "summary": analysis["summary"],
+            "source": "clinician",
+        }
+    )
+
+    update_appointment_record(appointment_id, {"vitals_summary": analysis["summary"]})
+
+    patient_user_id = appointment.get("patient_user_id")
+    if patient_user_id:
+        update_patient_profile(
+            patient_user_id,
+            {
+                "latest_vital_summary": analysis["summary"],
+                "latest_vital_severity": analysis["severity"],
+                "latest_vital_updated_at": vital.get("created_at"),
+            },
+        )
+
+    return vital

@@ -14,7 +14,8 @@ from models.patient_model import (
 )
 from models.user_model import DEFAULT_HOSPITAL_ID, get_doctor_for_specialty, sanitize_user
 from services.ai_service import get_ai_response
-from services.doctor_routing_service import infer_specialty
+from services.appointment_service import create_chat_appointment_request, list_doctor_directory
+from services.doctor_routing_service import get_specialty_label, infer_specialty
 from services.appointment_risk_service import build_appointment_risk_profile
 from services.deterioration_service import build_deterioration_insights
 from services.deterioration_prediction_service import build_deterioration_prediction, enrich_deterioration_prediction
@@ -32,6 +33,244 @@ class ValidationError(ValueError):
 APPOINTMENT_KEYWORDS = ("appointment", "book", "schedule", "consultation")
 EMERGENCY_KEYWORDS = ("emergency", "help", "ambulance", "urgent", "severe", "chest pain")
 HIGH_RISK_TRIAGE_LABELS = {"High", "Critical"}
+APPOINTMENT_STAGES = ("name", "age", "phone", "preferred_slot", "reason", "doctor_choice")
+APPOINTMENT_CANCEL_KEYWORDS = {"cancel", "stop", "exit", "leave booking", "skip booking"}
+NAME_BLOCKED_TERMS = {
+    "appointment",
+    "book",
+    "schedule",
+    "tomorrow",
+    "today",
+    "fever",
+    "pain",
+    "headache",
+    "cough",
+    "doctor",
+    "hospital",
+}
+SLOT_HINT_WORDS = {
+    "today",
+    "tomorrow",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+    "morning",
+    "afternoon",
+    "evening",
+    "night",
+    "am",
+    "pm",
+    "next",
+    "after",
+    "before",
+}
+
+
+def _clean_text(value: str) -> str:
+    return " ".join((value or "").strip().split())
+
+
+def _get_patient_snapshot(user: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    if not user or user.get("role") != "patient":
+        return None
+    return _safe_execute("load patient snapshot", lambda: get_patient_by_user_id(str(user["_id"])), default=None)
+
+
+def _build_ai_patient_context(patient: Optional[dict[str, Any]]) -> dict[str, Any]:
+    if not patient:
+        return {}
+
+    visit_history = list(patient.get("visit_history") or [])[:3]
+    return {
+        "age": patient.get("age"),
+        "gender": patient.get("gender"),
+        "dob": patient.get("dob"),
+        "assigned_doctor_name": patient.get("assigned_doctor_name"),
+        "assigned_doctor_specialty": patient.get("assigned_doctor_specialty"),
+        "visit_history": visit_history,
+    }
+
+
+def _appointment_stage_prompt(stage: str, *, patient_name: str = "") -> str:
+    if stage == "name":
+        return (
+            "I can help with that.\n\n"
+            "**Appointment booking**\n"
+            "- Step 1 of 5\n"
+            "- Please share your full name.\n"
+            "- You can type `cancel` anytime to stop booking."
+        )
+    if stage == "age":
+        return (
+            "**Appointment booking**\n"
+            "- Step 2 of 5\n"
+            f"- Thanks{f', {patient_name}' if patient_name else ''}. What is the patient's age?"
+        )
+    if stage == "phone":
+        return (
+            "**Appointment booking**\n"
+            "- Step 3 of 5\n"
+            "- What contact number should the hospital use?"
+        )
+    if stage == "preferred_slot":
+        return (
+            "**Appointment booking**\n"
+            "- Step 4 of 5\n"
+            "- What day or time would you prefer? Example: Tomorrow morning or Friday after 4 PM."
+        )
+    if stage == "reason":
+        return (
+            "**Appointment booking**\n"
+            "- Step 5 of 6\n"
+            "- What is the main reason for the visit? Example: chest pain, fever, follow-up, prescription review."
+        )
+    return (
+        "**Appointment booking**\n"
+        "- Step 6 of 6\n"
+        "- Please choose one of the suggested doctors by number or by typing the doctor's name."
+    )
+
+
+def _appointment_error_prompt(stage: str) -> str:
+    if stage == "name":
+        return "Please send only the patient's full name so I can continue the appointment request. You can also type `cancel`."
+    if stage == "age":
+        return "Please send the age as a number, for example: 32. You can also type `cancel`."
+    if stage == "phone":
+        return "Please send a valid contact number so the hospital can reach you. You can also type `cancel`."
+    if stage == "preferred_slot":
+        return "Please tell me the preferred day or time clearly, for example: tomorrow morning or Friday after 4 PM. You can also type `cancel`."
+    if stage == "reason":
+        return "Please tell me the main reason for the appointment in one short line, for example: fever, headache, chest pain, or follow-up. You can also type `cancel`."
+    return "Please choose one of the listed doctors by number or by name. You can also type `cancel`."
+
+
+def _looks_like_valid_name(candidate: str) -> bool:
+    trimmed = _clean_text(candidate)
+    if not re.fullmatch(r"[A-Za-z][A-Za-z .'-]{1,59}", trimmed):
+        return False
+
+    words = trimmed.lower().split()
+    if len(words) > 4:
+        return False
+    if any(word in NAME_BLOCKED_TERMS for word in words):
+        return False
+    return True
+
+
+def _looks_like_slot(candidate: str) -> bool:
+    lowered = candidate.lower()
+    if any(word in lowered for word in SLOT_HINT_WORDS):
+        return True
+
+    if re.search(r"\b\d{1,2}(:\d{2})?\s*(am|pm)\b", lowered):
+        return True
+
+    if re.search(r"\b\d{1,2}\s*(am|pm)\b", lowered):
+        return True
+
+    if len(candidate.split()) >= 2 and len(candidate) >= 8:
+        return True
+
+    return False
+
+
+def _is_cancel_message(user_message: str) -> bool:
+    normalized = _clean_text(user_message).lower()
+    return normalized in APPOINTMENT_CANCEL_KEYWORDS
+
+
+def _format_doctor_choice_prompt(doctors: list[dict[str, Any]], specialty: str) -> str:
+    specialty_label = get_specialty_label(specialty)
+    lines = [
+        "**Appointment booking**",
+        "- Step 6 of 6",
+        f"- I found these {specialty_label} doctors for your concern:",
+    ]
+    for index, doctor in enumerate(doctors[:5], start=1):
+        lines.append(f"{index}. {doctor['name']} ({doctor['doctor_code']})")
+    lines.append("")
+    lines.append("Reply with the number or doctor name you want to book.")
+    return "\n".join(lines)
+
+
+def _pick_doctor_from_choice(user_message: str, doctors: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    normalized = _clean_text(user_message)
+    if not normalized:
+        return None
+
+    if normalized.isdigit():
+        index = int(normalized) - 1
+        if 0 <= index < len(doctors):
+            return doctors[index]
+
+    lowered = normalized.lower()
+    for doctor in doctors:
+        if lowered == doctor["name"].lower():
+            return doctor
+        if doctor.get("doctor_code") and lowered == str(doctor["doctor_code"]).lower():
+            return doctor
+        if lowered in doctor["name"].lower():
+            return doctor
+    return None
+
+
+def _extract_appointment_stage_value(stage: str, user_message: str) -> Optional[str]:
+    normalized = _clean_text(user_message)
+    if not normalized:
+        return None
+
+    if stage == "name":
+        match = re.search(r"(?:my name is|name is)\s+([a-zA-Z ]{2,60})", normalized, re.IGNORECASE)
+        candidate = match.group(1).strip() if match else normalized
+        if _looks_like_valid_name(candidate):
+            return candidate
+        return None
+
+    if stage == "age":
+        match = re.search(r"\b(\d{1,3})\b", normalized)
+        if not match:
+            return None
+        age_value = int(match.group(1))
+        return str(age_value) if 0 < age_value < 121 else None
+
+    if stage == "phone":
+        digits = re.sub(r"\D", "", normalized)
+        return normalized if len(digits) >= 7 else None
+
+    if stage == "preferred_slot":
+        return normalized if _looks_like_slot(normalized) else None
+
+    if stage == "reason":
+        if len(normalized) < 3:
+            return None
+        if normalized.lower() in {"appointment", "book appointment", "consultation"}:
+            return None
+        return normalized
+
+    return normalized
+
+
+def _next_appointment_stage(current_stage: str) -> Optional[str]:
+    try:
+        current_index = APPOINTMENT_STAGES.index(current_stage)
+    except ValueError:
+        return APPOINTMENT_STAGES[0]
+    return APPOINTMENT_STAGES[current_index + 1] if current_index + 1 < len(APPOINTMENT_STAGES) else None
+
+
+def _format_numbered_questions(questions: list[str]) -> str:
+    return "\n".join(f"{index + 1}. {question}" for index, question in enumerate(questions))
+
+
+def _append_questions(base_response: str, questions: list[str], *, emergency: bool = False) -> str:
+    if not questions:
+        return base_response
+    return f"{base_response}\n\n**{get_follow_up_intro(emergency=emergency)}**\n{_format_numbered_questions(questions)}"
 
 
 def _extract_patient_details(user_message: str) -> dict[str, Any]:
@@ -92,11 +331,6 @@ def _extract_patient_details(user_message: str) -> dict[str, Any]:
     return details
 
 
-def _has_appointment_details(user_message: str) -> bool:
-    details = _extract_patient_details(user_message)
-    return bool(details.get("name") and details.get("age") and details.get("phone"))
-
-
 def _is_appointment_message(user_message: str) -> bool:
     lowered = user_message.lower()
     return any(keyword in lowered for keyword in APPOINTMENT_KEYWORDS)
@@ -111,7 +345,7 @@ def _appointment_intake_pending(user: Optional[dict[str, Any]]) -> bool:
     if not user or user.get("role") != "patient":
         return False
 
-    patient = _safe_execute("load pending appointment state", lambda: get_patient_by_user_id(str(user["_id"])), default=None)
+    patient = _get_patient_snapshot(user)
     return bool(patient and patient.get("appointment_intake_pending"))
 
 
@@ -356,16 +590,31 @@ def _deterioration_prediction_patient_payload(
     )
 
 
-def _record_appointment(user_message: str, user: Optional[dict[str, Any]]) -> str:
-    triage = assess_triage(user_message, appointment=True)
-    entities = extract_symptom_entities(user_message)
-    details = _extract_patient_details(user_message)
-    hospital_id, assigned_doctor_id, assigned_doctor_name, assigned_doctor_specialty = _resolve_care_assignment(
-        user,
-        user_message=user_message,
-        entities=entities,
-    )
-    previous_patient = _safe_execute("load patient snapshot", lambda: get_patient_by_user_id(str(user["_id"])), default=None) if user and user.get("role") == "patient" else None
+def _finalize_appointment_request(
+    *,
+    user_message: str,
+    user: Optional[dict[str, Any]],
+    details: dict[str, Any],
+    previous_patient: Optional[dict[str, Any]] = None,
+) -> str:
+    triage_message = details.get("reason") or details.get("initial_request") or user_message
+    triage = assess_triage(triage_message, appointment=True)
+    entities = extract_symptom_entities(triage_message)
+    selected_doctor = details.get("selected_doctor") or {}
+    if selected_doctor:
+        hospital_id = _hospital_id_for_user(user)
+        assigned_doctor_id = selected_doctor.get("id")
+        assigned_doctor_name = selected_doctor.get("name", "")
+        assigned_doctor_specialty = selected_doctor.get("specialty", "general_medicine")
+        selected_doctor_code = selected_doctor.get("doctor_code", "")
+    else:
+        hospital_id, assigned_doctor_id, assigned_doctor_name, assigned_doctor_specialty = _resolve_care_assignment(
+            user,
+            user_message=triage_message,
+            entities=entities,
+        )
+        selected_doctor_code = ""
+
     requested_deterioration = _deterioration_patient_payload(previous_patient, triage, entities)
     requested_appointment_risk = _appointment_risk_patient_payload(
         previous_patient=previous_patient,
@@ -383,75 +632,150 @@ def _record_appointment(user_message: str, user: Optional[dict[str, Any]]) -> st
         appointment_risk=requested_appointment_risk,
     )
 
-    if _has_appointment_details(user_message):
-        persisted = True
-        if user and user["role"] == "patient":
-            persisted = _safe_perform(
-                "record patient appointment request",
-                lambda: update_patient_profile(
-                    str(user["_id"]),
-                    {
-                        "name": details.get("name") or user["name"],
-                        "email": user["email"],
-                        "hospital_id": hospital_id,
-                        "phone": details.get("phone", ""),
-                        "age": details.get("age"),
-                        "status": "Appointment requested",
-                        "appointment_intake_pending": False,
-                        "assigned_doctor_id": assigned_doctor_id,
-                        "assigned_doctor_name": assigned_doctor_name,
-                        "assigned_doctor_specialty": assigned_doctor_specialty,
-                        "last_summary": user_message,
-                        **requested_deterioration,
-                        **requested_appointment_risk,
-                        **requested_prediction,
-                        **_follow_up_patient_payload([]),
-                        **_summary_patient_payload(
-                            patient_name=details.get("name") or user["name"],
-                            user_message=user_message,
-                            triage=triage,
-                            entities=entities,
-                            current_status="Appointment requested",
-                        ),
-                        **_triage_patient_payload(triage),
-                        **_entity_patient_payload(entities),
-                    },
-                    increment={"appointments_requested": 1},
-                ),
-            )
-        else:
-            persisted = _safe_perform(
-                "record guest appointment request",
-                lambda: create_guest_patient_from_message(
-                    {
-                        **details,
-                        "hospital_id": hospital_id,
-                        "assigned_doctor_id": assigned_doctor_id,
-                        "assigned_doctor_name": assigned_doctor_name,
-                        "assigned_doctor_specialty": assigned_doctor_specialty,
-                        **requested_appointment_risk,
-                        **requested_prediction,
-                    }
-                ),
-            )
-
-        if not persisted:
-            return "I captured your appointment details, but the booking system is temporarily unavailable. Please try again shortly."
-
-        _create_care_alerts(
-            alert_type="appointment_request",
-            title="New appointment request",
-            message=f"{details.get('name') or (user['name'] if user else 'A patient')} submitted appointment intake details.",
-            user=user,
-            severity="medium",
-            hospital_id=hospital_id,
-            assigned_doctor_id=assigned_doctor_id,
-            assigned_doctor_name=assigned_doctor_name,
-            triage=triage,
+    persisted = True
+    if user and user["role"] == "patient":
+        existing_phone = details.get("phone") or (previous_patient or {}).get("phone") or ""
+        existing_age = int(details["age"]) if details.get("age") else (previous_patient or {}).get("age")
+        persisted = _safe_perform(
+            "record patient appointment request",
+            lambda: update_patient_profile(
+                str(user["_id"]),
+                {
+                    "name": details.get("name") or user["name"],
+                    "email": user["email"],
+                    "hospital_id": hospital_id,
+                    "phone": existing_phone,
+                    "age": existing_age,
+                    "dob": (previous_patient or {}).get("dob", ""),
+                    "gender": (previous_patient or {}).get("gender", ""),
+                    "status": "Appointment requested",
+                    "appointment_intake_pending": False,
+                    "appointment_intake_stage": "",
+                    "appointment_intake_data": {},
+                    "preferred_appointment_slot": details.get("preferred_slot", ""),
+                    "appointment_reason": details.get("reason", ""),
+                    "assigned_doctor_code": selected_doctor_code,
+                    "assigned_doctor_id": assigned_doctor_id,
+                    "assigned_doctor_name": assigned_doctor_name,
+                    "assigned_doctor_specialty": assigned_doctor_specialty,
+                    "last_summary": triage_message,
+                    **requested_deterioration,
+                    **requested_appointment_risk,
+                    **requested_prediction,
+                    **_follow_up_patient_payload([]),
+                    **_summary_patient_payload(
+                        patient_name=details.get("name") or user["name"],
+                        user_message=triage_message,
+                        triage=triage,
+                        entities=entities,
+                        current_status="Appointment requested",
+                    ),
+                    **_triage_patient_payload(triage),
+                    **_entity_patient_payload(entities),
+                },
+                increment={"appointments_requested": 1},
+            ),
         )
-        return "Your appointment request has been recorded successfully. Our team will contact you shortly."
+        _safe_execute(
+            "create appointment record from chat",
+            lambda: create_chat_appointment_request(
+                user=user,
+                details=details,
+                hospital_id=hospital_id,
+                doctor={
+                    "_id": assigned_doctor_id,
+                    "name": assigned_doctor_name,
+                    "specialty": assigned_doctor_specialty,
+                    "doctor_code": selected_doctor_code,
+                } if assigned_doctor_id else None,
+            ),
+        )
+    else:
+        persisted = _safe_perform(
+            "record guest appointment request",
+            lambda: create_guest_patient_from_message(
+                {
+                    **details,
+                    "hospital_id": hospital_id,
+                    "assigned_doctor_id": assigned_doctor_id,
+                    "assigned_doctor_name": assigned_doctor_name,
+                    "assigned_doctor_specialty": assigned_doctor_specialty,
+                    **requested_appointment_risk,
+                    **requested_prediction,
+                }
+            ),
+        )
+
+    if not persisted:
+        return "I captured the appointment details, but the booking system is temporarily unavailable. Please try again shortly."
+
+    _create_care_alerts(
+        alert_type="appointment_request",
+        title="New appointment request",
+        message=f"{details.get('name') or (user['name'] if user else 'A patient')} submitted appointment intake details.",
+        user=user,
+        severity="medium",
+        hospital_id=hospital_id,
+        assigned_doctor_id=assigned_doctor_id,
+        assigned_doctor_name=assigned_doctor_name,
+        triage=triage,
+    )
+
+    preferred_slot = details.get("preferred_slot") or "next available slot"
+    visit_reason = details.get("reason") or "general consultation"
+    specialty_line = assigned_doctor_specialty.replace("_", " ").title() if assigned_doctor_specialty else "General Medicine"
+    doctor_line = assigned_doctor_name or "Hospital care team"
+
+    return (
+        "**Appointment request submitted**\n"
+        f"- Name: {details.get('name') or (user['name'] if user else 'Patient')}\n"
+        f"- Contact: {details.get('phone', 'Not provided')}\n"
+        f"- Preferred slot: {preferred_slot}\n"
+        f"- Visit reason: {visit_reason}\n"
+        f"- Doctor: {doctor_line}{f' ({selected_doctor_code})' if selected_doctor_code else ''}\n"
+        f"- Specialty: {specialty_line}\n\n"
+        "**What happens next**\n"
+        "- The care team will review the request and contact you shortly.\n"
+        "- If your symptoms worsen before the appointment, message here again or seek urgent care."
+    )
+
+
+def _start_appointment_intake(user_message: str, user: Optional[dict[str, Any]]) -> str:
+    previous_patient = _get_patient_snapshot(user)
+    triage = assess_triage(user_message, appointment=True)
+    entities = extract_symptom_entities(user_message)
+    compact_details = _extract_patient_details(user_message)
+    if compact_details.get("name") and compact_details.get("age") and compact_details.get("phone"):
+        compact_details["initial_request"] = user_message
+        return _finalize_appointment_request(
+            user_message=user_message,
+            user=user,
+            details=compact_details,
+            previous_patient=previous_patient,
+        )
+
+    hospital_id, assigned_doctor_id, assigned_doctor_name, assigned_doctor_specialty = _resolve_care_assignment(
+        user,
+        user_message=user_message,
+        entities=entities,
+    )
 
     if user and user["role"] == "patient":
+        prefilled_name = (previous_patient or {}).get("name") or user["name"]
+        prefilled_age = (previous_patient or {}).get("age")
+        prefilled_phone = (previous_patient or {}).get("phone", "")
+        initial_stage = "name"
+        initial_data: dict[str, Any] = {"initial_request": user_message}
+        if prefilled_name and prefilled_age and prefilled_phone:
+            initial_stage = "preferred_slot"
+            initial_data.update(
+                {
+                    "name": prefilled_name,
+                    "age": str(prefilled_age),
+                    "phone": prefilled_phone,
+                }
+            )
+
         pending_deterioration = _deterioration_patient_payload(previous_patient, triage, entities)
         pending_appointment_risk = _appointment_risk_patient_payload(
             previous_patient=previous_patient,
@@ -478,6 +802,8 @@ def _record_appointment(user_message: str, user: Optional[dict[str, Any]]) -> st
                     "hospital_id": hospital_id,
                     "status": "Appointment intake pending",
                     "appointment_intake_pending": True,
+                    "appointment_intake_stage": initial_stage,
+                    "appointment_intake_data": initial_data,
                     "assigned_doctor_id": assigned_doctor_id,
                     "assigned_doctor_name": assigned_doctor_name,
                     "assigned_doctor_specialty": assigned_doctor_specialty,
@@ -499,7 +825,147 @@ def _record_appointment(user_message: str, user: Optional[dict[str, Any]]) -> st
             ),
         )
 
-    return "Please provide your name, age, and contact number to book the appointment."
+    if user and user.get("role") == "patient" and previous_patient and previous_patient.get("age") and previous_patient.get("phone"):
+        return (
+            "**Appointment booking**\n"
+            "- I already have your profile details saved.\n"
+            "- Let's use those and move to scheduling.\n\n"
+            f"{_appointment_stage_prompt('preferred_slot', patient_name=previous_patient.get('name', user['name']))}"
+        )
+
+    return _appointment_stage_prompt("name")
+
+
+def _continue_appointment_intake(user_message: str, user: Optional[dict[str, Any]]) -> Optional[str]:
+    if not user or user.get("role") != "patient":
+        return None
+
+    patient = _get_patient_snapshot(user) or {}
+    if not patient.get("appointment_intake_pending"):
+        return None
+
+    if _is_cancel_message(user_message):
+        _safe_execute(
+            "cancel appointment intake",
+            lambda: update_patient_profile(
+                str(user["_id"]),
+                {
+                    "appointment_intake_pending": False,
+                    "appointment_intake_stage": "",
+                    "appointment_intake_data": {},
+                    "status": "Monitoring",
+                },
+            ),
+        )
+        return (
+            "**Appointment booking cancelled**\n"
+            "- I cleared the pending booking steps.\n"
+            "- You can start again anytime by saying you want to book an appointment."
+        )
+
+    stage = patient.get("appointment_intake_stage") or "name"
+    data = dict(patient.get("appointment_intake_data") or {})
+    previous_patient = patient
+
+    compact_details = _extract_patient_details(user_message)
+    if stage in {"name", "age", "phone"} and compact_details.get("name") and compact_details.get("age") and compact_details.get("phone"):
+        data.update(
+            {
+                "name": compact_details.get("name"),
+                "age": str(compact_details.get("age")),
+                "phone": compact_details.get("phone"),
+            }
+        )
+        next_stage = "preferred_slot"
+        _safe_execute(
+            "advance appointment intake from compact details",
+            lambda: update_patient_profile(
+                str(user["_id"]),
+                {
+                    "appointment_intake_pending": True,
+                    "appointment_intake_stage": next_stage,
+                    "appointment_intake_data": data,
+                    "status": "Appointment intake pending",
+                },
+            ),
+        )
+        return _appointment_stage_prompt(next_stage, patient_name=data.get("name", ""))
+
+    value = _extract_appointment_stage_value(stage, user_message)
+    if not value:
+        return _appointment_error_prompt(stage)
+
+    data[stage] = value
+
+    if stage == "reason":
+        specialty = infer_specialty(
+            user_message=f"{data.get('initial_request', '')} {value}".strip(),
+            entities=extract_symptom_entities(value),
+        )
+        doctor_options = list_doctor_directory(user or {}, specialty=specialty)
+        if not doctor_options:
+            doctor_options = list_doctor_directory(user or {})
+        if doctor_options:
+            data["requested_specialty"] = specialty
+            data["doctor_options"] = doctor_options[:5]
+            next_stage = "doctor_choice"
+            _safe_execute(
+                "advance appointment intake to doctor choice",
+                lambda: update_patient_profile(
+                    str(user["_id"]),
+                    {
+                        "appointment_intake_pending": True,
+                        "appointment_intake_stage": next_stage,
+                        "appointment_intake_data": data,
+                        "status": "Appointment intake pending",
+                    },
+                ),
+            )
+            return _format_doctor_choice_prompt(data["doctor_options"], specialty)
+        return (
+            "**Appointment booking paused**\n"
+            "- No doctor profiles are available in the current hospital setup yet.\n"
+            "- Please ask the hospital admin to add doctors, then try booking again."
+        )
+
+    next_stage = _next_appointment_stage(stage)
+    if next_stage:
+        _safe_execute(
+            "advance appointment intake stage",
+            lambda: update_patient_profile(
+                str(user["_id"]),
+                {
+                    "appointment_intake_pending": True,
+                    "appointment_intake_stage": next_stage,
+                    "appointment_intake_data": data,
+                    "status": "Appointment intake pending",
+                },
+            ),
+        )
+        return _appointment_stage_prompt(next_stage, patient_name=data.get("name", ""))
+
+    if stage == "doctor_choice":
+        doctor_options = data.get("doctor_options") or []
+        selected_doctor = _pick_doctor_from_choice(user_message, doctor_options)
+        if not selected_doctor:
+            return _appointment_error_prompt("doctor_choice")
+        data["selected_doctor"] = selected_doctor
+
+    details = {
+        "name": data.get("name") or user.get("name"),
+        "age": data.get("age"),
+        "phone": data.get("phone", ""),
+        "preferred_slot": data.get("preferred_slot", ""),
+        "reason": data.get("reason", ""),
+        "initial_request": data.get("initial_request", ""),
+        "selected_doctor": data.get("selected_doctor"),
+    }
+    return _finalize_appointment_request(
+        user_message=user_message,
+        user=user,
+        details=details,
+        previous_patient=previous_patient,
+    )
 
 
 def _record_emergency(user_message: str, user: Optional[dict[str, Any]]) -> str:
@@ -591,29 +1057,26 @@ def _record_emergency(user_message: str, user: Optional[dict[str, Any]]) -> str:
 
     if emergency_log:
         response = (
-            f"Emergency recorded successfully with reference {str(emergency_log['_id'])[-6:].upper()}. "
-            "Please contact local emergency services immediately if the symptoms are severe or worsening."
+            "**Urgent next step**\n"
+            f"- Emergency alert recorded with reference {str(emergency_log['_id'])[-6:].upper()}.\n"
+            "- Please contact local emergency services or the hospital immediately.\n\n"
+            "**Why this is urgent**\n"
+            f"- Current AI triage: {triage.get('triage_label', 'High')} ({triage.get('triage_score', 0)}/100)\n"
+            f"- Recommended action: {triage.get('recommended_action', 'Seek urgent in-person care.')}"
         )
-        if follow_up_questions:
-            response = (
-                f"{response}\n\n{get_follow_up_intro(emergency=True)}\n"
-                + "\n".join(f"- {question}" for question in follow_up_questions)
-            )
-        return response
+        return _append_questions(response, follow_up_questions, emergency=True)
 
     response = (
-        "Your symptoms may require urgent in-person care. Please contact local emergency services or the hospital immediately."
+        "**Urgent next step**\n"
+        "- Your symptoms may require urgent in-person care.\n"
+        "- Please contact local emergency services or the hospital immediately."
     )
-    if follow_up_questions:
-        response = (
-            f"{response}\n\n{get_follow_up_intro(emergency=True)}\n"
-            + "\n".join(f"- {question}" for question in follow_up_questions)
-        )
-    return response
+    return _append_questions(response, follow_up_questions, emergency=True)
 
 
 def process_chat_message(payload: dict[str, Any], *, user: Optional[dict[str, Any]] = None) -> str:
     user_message = (payload.get("message") or "").strip()
+    language_preference = (payload.get("language_preference") or "").strip() or None
     if not user_message:
         raise ValidationError("No message provided.")
 
@@ -629,9 +1092,21 @@ def process_chat_message(payload: dict[str, Any], *, user: Optional[dict[str, An
         )
         return response
 
+    pending_appointment_response = _continue_appointment_intake(user_message, user)
+    if pending_appointment_response is not None:
+        entities = extract_symptom_entities(user_message)
+        _save_chat_if_possible(
+            user,
+            user_message,
+            pending_appointment_response,
+            triage=assess_triage(user_message, appointment=True),
+            entities=entities,
+        )
+        return pending_appointment_response
+
     if _is_appointment_message(user_message):
         entities = extract_symptom_entities(user_message)
-        response = _record_appointment(user_message, user)
+        response = _start_appointment_intake(user_message, user)
         _save_chat_if_possible(
             user,
             user_message,
@@ -641,27 +1116,17 @@ def process_chat_message(payload: dict[str, Any], *, user: Optional[dict[str, An
         )
         return response
 
-    if _appointment_intake_pending(user) and _has_appointment_details(user_message):
-        entities = extract_symptom_entities(user_message)
-        response = _record_appointment(user_message, user)
-        _save_chat_if_possible(
-            user,
-            user_message,
-            response,
-            triage=assess_triage(user_message, appointment=True),
-            entities=entities,
-        )
-        return response
-
-    ai_response = get_ai_response(user_message)
     triage = assess_triage(user_message)
     entities = extract_symptom_entities(user_message)
+    ai_response = get_ai_response(
+        user_message,
+        language_preference=language_preference,
+        triage=triage,
+        entities=entities,
+        patient_context=_build_ai_patient_context(_get_patient_snapshot(user)),
+    )
     follow_up_questions = generate_follow_up_questions(entities=entities, triage=triage)
-    if follow_up_questions:
-        ai_response = (
-            f"{ai_response}\n\n{get_follow_up_intro()}\n"
-            + "\n".join(f"- {question}" for question in follow_up_questions)
-        )
+    ai_response = _append_questions(ai_response, follow_up_questions)
 
     if user and user["role"] == "patient":
         hospital_id, assigned_doctor_id, assigned_doctor_name, assigned_doctor_specialty = _resolve_care_assignment(

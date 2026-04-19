@@ -2,6 +2,7 @@ import {
   BarChart3,
   Building2,
   Calendar,
+  ClipboardCheck,
   Heart,
   LayoutDashboard,
   LogOut,
@@ -9,6 +10,7 @@ import {
   Shield,
   Users,
 } from "lucide-react";
+import { motion } from "framer-motion";
 import { Link, useLocation } from "react-router-dom";
 
 import { NavLink } from "@/components/NavLink";
@@ -43,6 +45,7 @@ const doctorNavItems = [
 
 const hospitalAdminNavItems = [
   { title: "Hospital Dashboard", url: "/admin", icon: Shield },
+  { title: "Doctor Access", url: "/admin/access", icon: ClipboardCheck },
   { title: "Analytics", url: "/analytics", icon: BarChart3 },
 ];
 
@@ -52,6 +55,16 @@ function getSpecialtyLabel(specialty?: string | null) {
   if (normalized === "pulmonology") return "Pulmonology";
   if (normalized === "neurology") return "Neurology";
   if (normalized === "endocrinology") return "Endocrinology";
+  if (normalized === "dermatology") return "Dermatology";
+  if (normalized === "orthopedics") return "Orthopedics";
+  if (normalized === "pediatrics") return "Pediatrics";
+  if (normalized === "psychiatry") return "Psychiatry";
+  if (normalized === "ent") return "ENT";
+  if (normalized === "gynecology") return "Gynecology";
+  if (normalized === "gastroenterology") return "Gastroenterology";
+  if (normalized === "nephrology") return "Nephrology";
+  if (normalized === "oncology") return "Oncology";
+  if (normalized === "ophthalmology") return "Ophthalmology";
   if (normalized === "general_medicine") return "General Medicine";
   if (normalized === "operations") return "Operations";
   return "";
@@ -110,7 +123,7 @@ function AppSidebarContent() {
       </div>
       <SidebarContent>
         {!collapsed && (
-          <div className="mx-3 mt-4 rounded-2xl border border-sidebar-border/40 bg-sidebar-accent/60 p-4">
+          <div className="mx-3 mt-4 rounded-2xl border border-sidebar-border/40 bg-sidebar-accent/60 p-4 shadow-[0_18px_36px_rgba(2,8,23,0.24)]">
             <div className="flex items-center gap-3">
               <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-sidebar-primary/10">
                 <Building2 className="h-4 w-4 text-sidebar-primary" />
@@ -151,14 +164,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const specialtyLabel = getSpecialtyLabel(user?.specialty);
 
   return (
-    <SidebarProvider className="min-h-svh bg-[radial-gradient(circle_at_top_right,_hsl(var(--accent))_0%,_transparent_34%),radial-gradient(circle_at_top_left,_rgba(15,118,110,0.08)_0%,_transparent_25%),linear-gradient(180deg,_hsl(var(--background))_0%,_hsl(var(--muted))_100%)]">
+    <SidebarProvider className="dashboard-canvas min-h-svh">
       <AppSidebarContent />
-      <SidebarInset className="min-h-svh bg-transparent">
-        <header className="sticky top-0 z-20 flex h-16 items-center gap-4 border-b bg-card/92 px-4 backdrop-blur sm:px-6">
+      <SidebarInset className="dashboard-shell min-h-svh bg-transparent">
+        <div className="workspace-ambient pointer-events-none absolute inset-x-0 top-0 z-0 h-80" />
+        <motion.header
+          initial={{ y: -18, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ duration: 0.4 }}
+          className="beam-border sticky top-0 z-20 flex h-16 items-center gap-4 border-b border-white/45 bg-white/60 px-4 backdrop-blur-2xl sm:px-6"
+        >
           <SidebarTrigger>
             <Menu className="h-5 w-5" />
           </SidebarTrigger>
-          <div className="hidden items-center gap-2 rounded-full border border-border/60 bg-background/70 px-3 py-1 text-xs text-muted-foreground md:inline-flex">
+          <div className="hidden items-center gap-2 rounded-full border border-white/80 bg-white/70 px-3 py-1 text-xs text-muted-foreground shadow-sm md:inline-flex">
             <span className="h-2 w-2 rounded-full bg-emerald-500" />
             Hospital systems online
           </div>
@@ -182,8 +201,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <LogOut className="h-4 w-4" />
             <span className="hidden sm:inline">Logout</span>
           </Button>
-        </header>
-        <main className="flex-1 overflow-x-hidden p-4 sm:p-6">{children}</main>
+        </motion.header>
+        <main className="relative z-10 flex-1 overflow-x-hidden p-4 sm:p-6 lg:p-7">{children}</main>
         <SupportFab />
       </SidebarInset>
     </SidebarProvider>

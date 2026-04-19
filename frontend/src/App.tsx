@@ -10,10 +10,14 @@ const LandingPage = lazy(() => import("./pages/LandingPage"));
 const PatientDashboard = lazy(() => import("./pages/PatientDashboard"));
 const DoctorDashboard = lazy(() => import("./pages/DoctorDashboard"));
 const HospitalAdminDashboard = lazy(() => import("./pages/HospitalAdminDashboard"));
+const DoctorAccessPage = lazy(() => import("./pages/DoctorAccessPage"));
 const AnalyticsDashboard = lazy(() => import("./pages/AnalyticsDashboard"));
 const DoctorSearch = lazy(() => import("./pages/DoctorSearch"));
 const AppointmentBooking = lazy(() => import("./pages/AppointmentBooking"));
 const AuthPage = lazy(() => import("./pages/AuthPage"));
+const VerifyEmailPage = lazy(() => import("./pages/VerifyEmailPage"));
+const ForgotPasswordPage = lazy(() => import("./pages/ForgotPasswordPage"));
+const ResetPasswordPage = lazy(() => import("./pages/ResetPasswordPage"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 const queryClient = new QueryClient();
@@ -82,6 +86,9 @@ const App = () => (
                   </PublicOnlyRoute>
                 }
               />
+              <Route path="/verify-email" element={<VerifyEmailPage />} />
+              <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+              <Route path="/reset-password" element={<ResetPasswordPage />} />
               <Route
                 path="/patient"
                 element={
@@ -103,6 +110,14 @@ const App = () => (
                 element={
                   <ProtectedRoute allowedRoles={["hospital_admin"]}>
                     <HospitalAdminDashboard />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/access"
+                element={
+                  <ProtectedRoute allowedRoles={["hospital_admin"]}>
+                    <DoctorAccessPage />
                   </ProtectedRoute>
                 }
               />

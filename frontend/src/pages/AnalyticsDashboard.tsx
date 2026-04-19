@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { motion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
 import {
   endOfMonth,
@@ -185,18 +186,40 @@ export default function AnalyticsDashboard() {
     },
   ];
 
+  const fadeUp = {
+    hidden: { opacity: 0, y: 18 },
+    visible: (index: number) => ({
+      opacity: 1,
+      y: 0,
+      transition: { delay: index * 0.06, duration: 0.35, ease: "easeOut" as const },
+    }),
+  };
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <div>
-          <h1 className="font-display text-2xl font-bold text-foreground sm:text-3xl">Analytics Dashboard</h1>
-          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Live care activity, patient trends, and emergency patterns for the hospital admin workspace.
-          </p>
+        <div className="dashboard-hero rounded-[2rem] px-6 py-6 sm:px-7">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <div className="inline-flex items-center gap-2 rounded-full border border-white/80 bg-white/70 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.22em] text-muted-foreground shadow-sm">
+                <Waves className="h-3.5 w-3.5 text-primary" />
+                Forecast And Intelligence
+              </div>
+              <h1 className="mt-4 font-display text-3xl font-semibold tracking-[-0.04em] text-foreground sm:text-[2.35rem]">
+                Analytics Dashboard
+              </h1>
+              <p className="mt-2 max-w-2xl text-sm leading-7 text-muted-foreground">
+                Live care activity, patient trends, emergency patterns, and operational forecasting for the hospital admin workspace.
+              </p>
+            </div>
+            <Badge variant="secondary">
+              {overview?.operational_flags?.high_risk_patients ?? highRiskPatients} high-risk patients
+            </Badge>
+          </div>
         </div>
 
         {error && (
-          <Alert variant="destructive">
+          <Alert variant="destructive" className="cinematic-alert">
             <AlertDescription>
               {error instanceof ApiError ? error.message : "Unable to load analytics right now."}
             </AlertDescription>
@@ -204,8 +227,9 @@ export default function AnalyticsDashboard() {
         )}
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          {statCards.map((item) => (
-            <Card key={item.label} className="border-border/60 bg-card/95 shadow-card">
+          {statCards.map((item, index) => (
+            <motion.div key={item.label} initial="hidden" animate="visible" variants={fadeUp} custom={index}>
+            <Card className="metric-card metric-card-hover border-white/70 bg-card/95 shadow-card">
               <CardContent className="p-5">
                 <div className="mb-3 flex items-center justify-between">
                   <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-accent">
@@ -222,11 +246,12 @@ export default function AnalyticsDashboard() {
                 </p>
               </CardContent>
             </Card>
+            </motion.div>
           ))}
         </div>
 
         <div className="grid gap-6 xl:grid-cols-2">
-          <Card className="border-border/60 bg-card/95 shadow-elevated">
+          <Card className="premium-section depth-card border-white/70 bg-card/95 shadow-elevated">
             <CardHeader>
               <CardTitle className="font-display text-lg">Monthly Patient And Emergency Activity</CardTitle>
             </CardHeader>
@@ -244,7 +269,7 @@ export default function AnalyticsDashboard() {
             </CardContent>
           </Card>
 
-          <Card className="border-border/60 bg-card/95 shadow-card">
+          <Card className="premium-section depth-card border-white/70 bg-card/95 shadow-card">
             <CardHeader>
               <CardTitle className="font-display text-lg">Risk Distribution</CardTitle>
             </CardHeader>
@@ -272,7 +297,7 @@ export default function AnalyticsDashboard() {
         </div>
 
         <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
-          <Card className="border-border/60 bg-card/95 shadow-card">
+          <Card className="premium-section depth-card border-white/70 bg-card/95 shadow-card">
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle className="font-display text-lg">Demand Forecast</CardTitle>
               <Badge variant="outline">{demandForecast?.forecast_window || "Next 7 days"}</Badge>
@@ -292,10 +317,10 @@ export default function AnalyticsDashboard() {
                   value: demandForecast?.staffing_pressure || "Stable",
                 },
               ].map((item) => (
-                <div key={item.label} className="rounded-2xl bg-muted/50 p-4">
-                  <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{item.label}</p>
-                  <div className="mt-2 flex items-center gap-3">
-                    <Waves className="h-4 w-4 text-primary" />
+                  <div key={item.label} className="rounded-2xl bg-white/60 p-4 shadow-sm">
+                    <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{item.label}</p>
+                    <div className="mt-2 flex items-center gap-3">
+                      <Waves className="h-4 w-4 text-primary" />
                     <p className="font-display text-2xl font-bold text-foreground">{item.value}</p>
                   </div>
                 </div>
@@ -303,7 +328,7 @@ export default function AnalyticsDashboard() {
             </CardContent>
           </Card>
 
-          <Card className="border-border/60 bg-card/95 shadow-card">
+          <Card className="premium-section depth-card border-white/70 bg-card/95 shadow-card">
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle className="font-display text-lg">Anomaly Watch</CardTitle>
               <ShieldAlert className="h-4 w-4 text-muted-foreground" />
@@ -315,7 +340,7 @@ export default function AnalyticsDashboard() {
                 </p>
               )}
               {anomalySignals.map((signal) => (
-                <div key={signal.signal} className="rounded-2xl border border-border/60 p-4">
+                <div key={signal.signal} className="rounded-2xl border border-white/70 bg-white/55 p-4">
                   <div className="mb-2 flex items-center justify-between gap-3">
                     <p className="font-medium capitalize text-foreground">{signal.signal}</p>
                     <Badge variant={signal.severity === "high" ? "destructive" : "secondary"}>{signal.severity}</Badge>
@@ -331,7 +356,7 @@ export default function AnalyticsDashboard() {
         </div>
 
         <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">
-          <Card className="border-border/60 bg-card/95 shadow-card">
+          <Card className="premium-section depth-card border-white/70 bg-card/95 shadow-card">
             <CardHeader>
               <CardTitle className="font-display text-lg">Symptom Hotspots</CardTitle>
             </CardHeader>
@@ -352,7 +377,7 @@ export default function AnalyticsDashboard() {
             </CardContent>
           </Card>
 
-          <Card className="border-border/60 bg-card/95 shadow-card">
+          <Card className="premium-section depth-card border-white/70 bg-card/95 shadow-card">
             <CardHeader>
               <CardTitle className="font-display text-lg">Care Funnel</CardTitle>
             </CardHeader>
@@ -375,7 +400,7 @@ export default function AnalyticsDashboard() {
         </div>
 
         <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-          <Card className="border-border/60 bg-card/95 shadow-card">
+          <Card className="premium-section depth-card border-white/70 bg-card/95 shadow-card">
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle className="font-display text-lg">Patients Needing Attention</CardTitle>
               <Badge variant="secondary">
@@ -387,7 +412,7 @@ export default function AnalyticsDashboard() {
                 <p className="text-sm text-muted-foreground">Priority patient signals will appear here as triage and summaries are generated.</p>
               )}
               {priorityPatients.map((patient) => (
-                <div key={patient.id || patient.email} className="rounded-2xl border border-border/60 p-4">
+                <div key={patient.id || patient.email} className="rounded-2xl border border-white/70 bg-white/55 p-4">
                   <div className="mb-2 flex items-start justify-between gap-3">
                     <div>
                       <p className="font-medium text-foreground">{patient.name}</p>
@@ -410,7 +435,7 @@ export default function AnalyticsDashboard() {
             </CardContent>
           </Card>
 
-          <Card className="border-border/60 bg-card/95 shadow-card">
+          <Card className="depth-card border-white/70 bg-card/95 shadow-card">
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle className="font-display text-lg">Red-Flag Signals</CardTitle>
               <ShieldAlert className="h-4 w-4 text-muted-foreground" />
@@ -420,7 +445,7 @@ export default function AnalyticsDashboard() {
                 <p className="text-sm text-muted-foreground">Red-flag symptom extraction will appear here when urgent phrases are detected.</p>
               )}
               {redFlagDistribution.map((entry) => (
-                <div key={entry.name} className="rounded-2xl bg-muted/50 p-4">
+                <div key={entry.name} className="rounded-2xl bg-white/60 p-4 shadow-sm">
                   <div className="mb-2 flex items-center justify-between gap-3">
                     <p className="font-medium text-foreground capitalize">{entry.name}</p>
                     <Badge variant="destructive">{entry.count}</Badge>
@@ -437,7 +462,7 @@ export default function AnalyticsDashboard() {
           </Card>
         </div>
 
-        <Card className="border-border/60 bg-card/95 shadow-card">
+        <Card className="premium-section depth-card border-white/70 bg-card/95 shadow-card">
           <CardHeader>
             <CardTitle className="font-display text-lg">Weekly Care Trend</CardTitle>
           </CardHeader>

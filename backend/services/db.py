@@ -1,6 +1,7 @@
 import os
 from functools import lru_cache
 
+from gridfs import GridFSBucket
 from pymongo import MongoClient
 
 
@@ -23,3 +24,8 @@ def get_client() -> MongoClient:
 
 def get_database():
     return get_client()[_database_name()]
+
+
+@lru_cache(maxsize=1)
+def get_gridfs_bucket() -> GridFSBucket:
+    return GridFSBucket(get_database(), bucket_name="document_files")

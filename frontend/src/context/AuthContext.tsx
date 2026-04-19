@@ -20,7 +20,16 @@ interface AuthContextValue {
   isAuthenticated: boolean;
   isInitializing: boolean;
   loginUser: (payload: { email: string; password: string }) => Promise<AuthResponse>;
-  signupUser: (payload: { name: string; email: string; password: string; role: UserRole; specialty?: string }) => Promise<AuthResponse>;
+  signupUser: (payload: {
+    name: string;
+    email: string;
+    password: string;
+    role: UserRole;
+    specialty?: string;
+    phone?: string;
+    dob?: string;
+    gender?: string;
+  }) => Promise<AuthResponse>;
   logout: () => void;
 }
 
@@ -102,11 +111,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const loginUser = async (payload: { email: string; password: string }) => {
     const result = await login(payload);
+    if (!result.token || !result.user) {
+      throw new Error("Login response is missing session data.");
+    }
     const nextSession: StoredSession = {
       token: result.token,
       role: result.role,
       user: result.user,
-      profile: result.profile,
+      profile: result.profile || null,
     };
 
     setSession(nextSession);
@@ -114,13 +126,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return result;
   };
 
-  const signupUser = async (payload: { name: string; email: string; password: string; role: UserRole; specialty?: string }) => {
+  const signupUser = async (payload: {
+    name: string;
+    email: string;
+    password: string;
+    role: UserRole;
+    specialty?: string;
+    phone?: string;
+    dob?: string;
+    gender?: string;
+  }) => {
     const result = await signup(payload);
+    if (!result.token || !result.user) {
+      return result;
+    }
+
     const nextSession: StoredSession = {
       token: result.token,
       role: result.role,
       user: result.user,
-      profile: result.profile,
+      profile: result.profile || null,
     };
 
     setSession(nextSession);
