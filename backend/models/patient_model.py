@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Optional
 
-from models.base import serialize_document, utc_now
+from models.base import serialize_document, to_object_id, utc_now
 from services.db import get_database
 
 
@@ -88,6 +88,20 @@ def create_or_update_patient_profile(user: dict[str, Any]) -> Optional[dict[str,
                 "followup_due_at": now,
                 "appointment_risk_updated_at": now,
                 "missed_followup_count": 0,
+                "followup_dropout_risk_score": 16,
+                "followup_dropout_risk_label": "Low",
+                "followup_dropout_risk_summary": "Low follow-up dropout risk. Continue standard reminders before the next scheduled review.",
+                "followup_dropout_risk_factors": [],
+                "followup_outreach_window": "Routine reminder within 7 days",
+                "followup_next_touch_at": now,
+                "followup_dropout_updated_at": now,
+                "care_coordinator_status": "open",
+                "care_coordinator_note": "",
+                "care_coordinator_updated_at": now,
+                "care_coordinator_updated_by": "",
+                "care_coordinator_updated_by_user_id": "",
+                "care_coordinator_history": [],
+                "care_outreach_history": [],
                 "deterioration_prediction_score": 18,
                 "deterioration_prediction_label": "Low",
                 "deterioration_prediction_reason": "No strong near-term deterioration signal is visible from the current record.",
@@ -118,6 +132,13 @@ def create_or_update_patient_profile(user: dict[str, Any]) -> Optional[dict[str,
 
 def get_patient_by_user_id(user_id: str) -> Optional[dict[str, Any]]:
     return _collection().find_one({"user_id": user_id})
+
+
+def get_patient_by_id(patient_id: str) -> Optional[dict[str, Any]]:
+    object_id = to_object_id(patient_id)
+    if not object_id:
+        return None
+    return _collection().find_one({"_id": object_id})
 
 
 def update_patient_profile(user_id: str, updates: dict[str, Any], *, increment: Optional[dict[str, int]] = None) -> None:
@@ -183,6 +204,23 @@ def create_guest_patient_from_message(details: dict[str, Any]) -> None:
             "followup_due_at": details.get("followup_due_at", now),
             "appointment_risk_updated_at": details.get("appointment_risk_updated_at", now),
             "missed_followup_count": details.get("missed_followup_count", 0),
+            "followup_dropout_risk_score": details.get("followup_dropout_risk_score", 28),
+            "followup_dropout_risk_label": details.get("followup_dropout_risk_label", "Medium"),
+            "followup_dropout_risk_summary": details.get(
+                "followup_dropout_risk_summary",
+                "Medium follow-up dropout risk because the active appointment request still needs outreach.",
+            ),
+            "followup_dropout_risk_factors": details.get("followup_dropout_risk_factors", []),
+            "followup_outreach_window": details.get("followup_outreach_window", "Outreach within 72 hours"),
+            "followup_next_touch_at": details.get("followup_next_touch_at", now),
+            "followup_dropout_updated_at": details.get("followup_dropout_updated_at", now),
+            "care_coordinator_status": details.get("care_coordinator_status", "open"),
+            "care_coordinator_note": details.get("care_coordinator_note", ""),
+            "care_coordinator_updated_at": details.get("care_coordinator_updated_at", now),
+            "care_coordinator_updated_by": details.get("care_coordinator_updated_by", ""),
+            "care_coordinator_updated_by_user_id": details.get("care_coordinator_updated_by_user_id", ""),
+            "care_coordinator_history": details.get("care_coordinator_history", []),
+            "care_outreach_history": details.get("care_outreach_history", []),
             "deterioration_prediction_score": details.get("deterioration_prediction_score", 38),
             "deterioration_prediction_label": details.get("deterioration_prediction_label", "Medium"),
             "deterioration_prediction_reason": details.get(

@@ -1,0 +1,89 @@
+{
+  "dataset_size": 12,
+  "embedding_backend": "hashing-vectorizer-medical-v1",
+  "transformer_enabled": false,
+  "triage_model_version": "transformer-semantic-triage-v3",
+  "specialty_model_version": "transformer-semantic-specialty-v3",
+  "triage_accuracy": 0.75,
+  "triage_macro_f1": 0.731,
+  "triage_baseline_accuracy": 0.917,
+  "specialty_accuracy": 1.0,
+  "specialty_baseline_accuracy": 0.833,
+  "triage_confusion_matrix": [
+    {
+      "label": "Low",
+      "Low": 3,
+      "Medium": 0,
+      "High": 0,
+      "Critical": 0
+    },
+    {
+      "label": "Medium",
+      "Low": 0,
+      "Medium": 3,
+      "High": 0,
+      "Critical": 0
+    },
+    {
+      "label": "High",
+      "Low": 0,
+      "Medium": 1,
+      "High": 1,
+      "Critical": 1
+    },
+    {
+      "label": "Critical",
+      "Low": 0,
+      "Medium": 0,
+      "High": 1,
+      "Critical": 2
+    }
+  ],
+  "sample_predictions": [
+    {
+      "text": "I have mild cough and sore throat since yesterday",
+      "expected_triage": "Low",
+      "predicted_triage": "Low",
+      "triage_confidence": 0.73,
+      "expected_specialty": "ent",
+      "predicted_specialty": "ent",
+      "specialty_reason": "ENT matched symptoms like sore throat, throat."
+    },
+    {
+      "text": "I want to book a routine diabetes follow-up",
+      "expected_triage": "Low",
+      "predicted_triage": "Low",
+      "triage_confidence": 0.69,
+      "expected_specialty": "endocrinology",
+      "predicted_specialty": "endocrinology",
+      "specialty_reason": "Endocrinology matched symptoms like diabetes."
+    },
+    {
+      "text": "I have headache and dizziness for 2 days",
+      "expected_triage": "Medium",
+      "predicted_triage": "Medium",
+      "triage_confidence": 0.93,
+      "expected_specialty": "neurology",
+      "predicted_specialty": "neurology",
+      "specialty_reason": "Neurology matched symptoms like headache, dizziness."
+    },
+    {
+      "text": "I have fever, cough and body ache since this morning",
+      "expected_triage": "Medium",
+      "predicted_triage": "Medium",
+      "triage_confidence": 0.81,
+      "expected_specialty": "pulmonology",
+      "predicted_specialty": "pulmonology",
+      "specialty_reason": "Pulmonology matched symptoms like cough."
+    },
+    {
+      "text": "I have abdominal pain and vomiting for 1 day",
+      "expected_triage": "Medium",
+      "predicted_triage": "Medium",
+      "triage_confidence": 0.85,
+      "expected_specialty": "gastroenterology",
+      "predicted_specialty": "gastroenterology",
+      "specialty_reason": "Gastroenterology matched symptoms like abdominal pain, vomiting."
+    }
+  ]
+}

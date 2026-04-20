@@ -12,6 +12,7 @@ from models.appointment_model import get_appointment_by_id, update_appointment_r
 from models.patient_model import get_patient_by_user_id
 from models.user_model import DEFAULT_HOSPITAL_ID
 from services.db import get_gridfs_bucket
+from services.document_ai_service import extract_clinical_document_entities, extract_document_text
 
 
 class ValidationError(ValueError):
@@ -70,130 +71,46 @@ def _normalize_document_type(value: str) -> str:
     return normalized
 
 
-TIMING_STOPWORDS = {
-    "morning",
-    "afternoon",
-    "evening",
-    "night",
-    "daily",
-    "times",
-    "before",
-    "after",
-    "food",
-    "breakfast",
-    "lunch",
-    "dinner",
-    "once",
-    "twice",
-    "thrice",
-    "tablet",
-    "tablets",
-    "capsule",
-    "capsules",
-    "syrup",
-    "drops",
-    "drop",
-    "ml",
-    "mg",
-}
-MED_NAME_PREFIXES = r"^(tab(?:let)?|cap(?:sule)?|syrup|syp|inj(?:ection)?|drop|drops)\.?\s+"
-MED_DOSAGE_PATTERN = re.compile(r"(\d+(?:\.\d+)?\s?(?:mg|mcg|g|ml|iu|units?))", re.IGNORECASE)
-COMMON_INSTRUCTION_WORDS = {"take", "use", "apply", "for", "x", "days", "day", "weeks", "week"}
-
-
-def _normalize_timing(raw_text: str) -> str:
-    lowered = raw_text.lower()
-    schedule = []
-
-    if "1-1-1" in lowered or "tds" in lowered or "tid" in lowered or "three times" in lowered:
-        schedule = ["Morning", "Noon", "Night"]
-    elif "1-0-1" in lowered or "bd" in lowered or "bid" in lowered or "twice" in lowered:
-        schedule = ["Morning", "Night"]
-    elif "1-0-0" in lowered or "od" in lowered or "qam" in lowered:
-        schedule = ["Morning"]
-    elif "0-1-0" in lowered:
-        schedule = ["Noon"]
-    elif "0-0-1" in lowered or "hs" in lowered:
-        schedule = ["Night"]
-    else:
-        for keyword, label in [("morning", "Morning"), ("noon", "Noon"), ("afternoon", "Afternoon"), ("night", "Night"), ("evening", "Evening")]:
-            if keyword in lowered and label not in schedule:
-                schedule.append(label)
-
-    qualifiers = []
-    if "before food" in lowered or "before meal" in lowered:
-        qualifiers.append("Before food")
-    if "after food" in lowered or "after meal" in lowered:
-        qualifiers.append("After food")
-    if "sos" in lowered or "as needed" in lowered or "prn" in lowered:
-        qualifiers.append("As needed")
-
-    parts = schedule + qualifiers
-    return ", ".join(parts) if parts else "Follow clinician instructions"
-
-
-def _extract_drug_name(raw_text: str) -> str:
-    cleaned = re.sub(MED_NAME_PREFIXES, "", raw_text.strip(), flags=re.IGNORECASE)
-    cleaned = re.sub(r"^[\-\u2022\d.)\s]+", "", cleaned)
-    tokens = []
-
-    for token in cleaned.split():
-        sanitized = token.strip(",.:;()[]")
-        lowered = sanitized.lower()
-        if not sanitized:
-            continue
-        if MED_DOSAGE_PATTERN.fullmatch(sanitized) or lowered in TIMING_STOPWORDS or lowered in COMMON_INSTRUCTION_WORDS:
-            break
-        if re.fullmatch(r"\d+(?:/\d+)?", sanitized):
-            break
-        if not re.match(r"^[A-Za-z][A-Za-z0-9/\-]*$", sanitized):
-            break
-        tokens.append(sanitized)
-        if len(tokens) >= 3:
-            break
-
-    return " ".join(tokens)
-
-
-def _derive_prescription_insights(notes: str, content_text: str, file_name: str = "", content_type: str = "") -> dict[str, Any]:
-    combined = "\n".join(part for part in [notes, content_text] if part).strip()
-    lines = [segment.strip(" -") for segment in re.split(r"[\n;]+", combined) if segment.strip()]
-    medication_schedule = []
-    seen = set()
-
-    for line in lines:
-        dosage_match = MED_DOSAGE_PATTERN.search(line)
-        drug_name = _extract_drug_name(line)
-        if not drug_name:
-            continue
-        lowered_name = drug_name.lower()
-        if lowered_name in seen:
-            continue
-        seen.add(lowered_name)
-        medication_schedule.append(
-            {
-                "drug_name": drug_name,
-                "dosage": dosage_match.group(1) if dosage_match else "Not specified",
-                "timing": _normalize_timing(line),
-            }
-        )
+def _derive_prescription_insights(
+    notes: str,
+    content_text: str,
+    file_name: str = "",
+    content_type: str = "",
+    *,
+    file_data_url: str = "",
+) -> dict[str, Any]:
+    extracted = extract_document_text(
+        notes=notes,
+        content_text=content_text,
+        file_name=file_name,
+        content_type=content_type,
+        file_data_url=file_data_url,
+    )
+    entities = extract_clinical_document_entities(
+        document_type="prescription",
+        document_text=extracted["combined_text"],
+        ai_medication_schedule=extracted.get("medication_schedule"),
+        ai_interpretation_notes=extracted.get("ai_interpretation_notes", ""),
+    )
+    medication_schedule = entities["medication_schedule"]
+    extracted_tags = [item["drug_name"].lower() for item in medication_schedule[:6]] or ["prescription"]
 
     if medication_schedule:
         meds_text = ", ".join(
-            f"{item['drug_name']} ({item['dosage']}, {item['timing']})" for item in medication_schedule[:4]
+            f"{item['drug_name']} ({item['dosage']}, {item['timing']}, {item['duration']})"
+            for item in medication_schedule[:4]
         )
-        summary = f"Prescription reviewed. Medicines identified: {meds_text}."
-        return {
-            "summary": summary,
-            "prescription_summary": summary,
-            "medication_schedule": medication_schedule,
-            "review_priority": "Priority",
-            "extracted_tags": [item["drug_name"].lower() for item in medication_schedule[:6]],
-        }
-
-    if file_name or content_type:
+        source_hint = "AI handwriting interpretation" if extracted["ocr_status"] == "ai_handwriting_interpreted" else "OCR" if extracted["ocr_status"] == "ocr_extracted" else "text analysis"
+        summary = f"Prescription reviewed with {source_hint}. Medicines identified: {meds_text}."
+    elif extracted["combined_text"]:
         summary = (
-            "Prescription uploaded. Automatic medicine extraction works best when prescription text or notes are included."
+            "Prescription uploaded. Some text was detected, but medicine extraction confidence is low. "
+            "Add clearer notes or typed prescription text for better results."
+        )
+    elif file_name or content_type:
+        summary = (
+            "Prescription uploaded. OCR text could not be extracted from the file in this environment. "
+            "Add typed prescription notes for medicine guidance."
         )
     else:
         summary = "Prescription uploaded for clinician review."
@@ -201,14 +118,41 @@ def _derive_prescription_insights(notes: str, content_text: str, file_name: str 
     return {
         "summary": summary,
         "prescription_summary": summary,
-        "medication_schedule": [],
+        "medication_schedule": medication_schedule,
         "review_priority": "Priority",
-        "extracted_tags": ["prescription"],
+        "extracted_tags": extracted_tags,
+        "ocr_status": extracted["ocr_status"],
+        "ocr_source": extracted["ocr_source"],
+        "ocr_text_excerpt": extracted["ocr_text_excerpt"],
+        "extraction_model": extracted["extraction_model"],
+        "extraction_confidence": entities["extraction_confidence"],
+        "ai_interpretation_notes": entities.get("ai_interpretation_notes", ""),
+        "document_domain": entities.get("document_domain", "prescription"),
+        "structured_findings": entities.get("structured_findings", []),
+        "abnormal_findings": entities.get("abnormal_findings", []),
+        "clinical_highlights": entities.get("clinical_highlights", []),
+        "follow_up_recommendations": entities.get("follow_up_recommendations", []),
+        "content_text": extracted["combined_text"][:4000],
     }
 
 
-def _derive_summary(document_type: str, notes: str, content_text: str, *, file_name: str = "", content_type: str = "") -> dict[str, Any]:
-    combined = " ".join(part for part in [notes, content_text] if part).strip()
+def _derive_summary(
+    document_type: str,
+    notes: str,
+    content_text: str,
+    *,
+    file_name: str = "",
+    content_type: str = "",
+    file_data_url: str = "",
+) -> dict[str, Any]:
+    extracted = extract_document_text(
+        notes=notes,
+        content_text=content_text,
+        file_name=file_name,
+        content_type=content_type,
+        file_data_url=file_data_url,
+    )
+    combined = extracted["combined_text"]
     lowered = combined.lower()
     extracted_tags = []
     for keyword in ["fever", "cough", "chest pain", "shortness of breath", "bp", "blood pressure", "sugar", "glucose", "allergy", "antibiotic"]:
@@ -222,7 +166,18 @@ def _derive_summary(document_type: str, notes: str, content_text: str, *, file_n
         review_priority = "Priority"
 
     if document_type == "prescription":
-        return _derive_prescription_insights(notes, content_text, file_name=file_name, content_type=content_type)
+        return _derive_prescription_insights(
+            notes,
+            content_text,
+            file_name=file_name,
+            content_type=content_type,
+            file_data_url=file_data_url,
+        )
+
+    document_entities = extract_clinical_document_entities(
+        document_type=document_type,
+        document_text=combined,
+    )
 
     type_label = document_type.replace("_", " ").title()
     summary = (
@@ -231,12 +186,56 @@ def _derive_summary(document_type: str, notes: str, content_text: str, *, file_n
         else f"{type_label} uploaded with notes about {combined[:220]}{'...' if len(combined) > 220 else ''}"
     )
 
+    if document_entities.get("abnormal_findings"):
+        summary = f"{type_label} reviewed. Key concern: {document_entities['abnormal_findings'][0]}"
+    elif document_entities.get("clinical_highlights"):
+        summary = f"{type_label} reviewed. Key finding: {document_entities['clinical_highlights'][0]}"
+    elif document_type == "discharge_note" and document_entities.get("discharge_risk_summary"):
+        summary = document_entities["discharge_risk_summary"]
+
+    if document_type == "lab_report" and document_entities.get("abnormal_value_count", 0) > 0:
+        summary = (
+            f"Lab report reviewed with {document_entities['abnormal_value_count']} abnormal value(s). "
+            f"Top concern: {document_entities['abnormal_findings'][0]}"
+        )
+    if document_type == "discharge_note" and document_entities.get("discharge_risk_level") == "high":
+        review_priority = "Urgent"
+    if document_type == "lab_report" and document_entities.get("lab_alert_level") in {"high", "critical"}:
+        review_priority = "Urgent"
+    elif document_type == "lab_report" and document_entities.get("lab_alert_level") == "medium":
+        review_priority = "Priority"
+
+    extracted_tags = list(extracted_tags)
+    extracted_tags.extend(document_entities.get("analytes_detected", []))
+    extracted_tags.extend(document_entities.get("discharge_red_flags", [])[:2])
+    extracted_tags = list(dict.fromkeys([tag for tag in extracted_tags if tag]))[:10]
+
     return {
         "summary": summary,
         "prescription_summary": "",
         "medication_schedule": [],
         "extracted_tags": extracted_tags,
-        "review_priority": review_priority,
+        "review_priority": "Urgent" if document_entities.get("abnormal_findings") else review_priority,
+        "ocr_status": extracted.get("ocr_status", "not_applicable"),
+        "ocr_source": extracted.get("ocr_source", "manual_text"),
+        "ocr_text_excerpt": extracted.get("ocr_text_excerpt", ""),
+        "extraction_model": extracted.get("extraction_model", "ocr-nlp-prescription-v1"),
+        "extraction_confidence": document_entities.get("extraction_confidence", 0.0),
+        "ai_interpretation_notes": extracted.get("ai_interpretation_notes", ""),
+        "document_domain": document_entities.get("document_domain", document_type),
+        "structured_findings": document_entities.get("structured_findings", []),
+        "abnormal_findings": document_entities.get("abnormal_findings", []),
+        "clinical_highlights": document_entities.get("clinical_highlights", []),
+        "follow_up_recommendations": document_entities.get("follow_up_recommendations", []),
+        "lab_alert_level": document_entities.get("lab_alert_level", "low"),
+        "abnormal_value_count": document_entities.get("abnormal_value_count", 0),
+        "analytes_detected": document_entities.get("analytes_detected", []),
+        "discharge_risk_level": document_entities.get("discharge_risk_level", "low"),
+        "discharge_risk_summary": document_entities.get("discharge_risk_summary", ""),
+        "discharge_key_diagnoses": document_entities.get("discharge_key_diagnoses", []),
+        "discharge_procedures": document_entities.get("discharge_procedures", []),
+        "discharge_red_flags": document_entities.get("discharge_red_flags", []),
+        "content_text": combined[:4000],
     }
 
 
@@ -266,7 +265,14 @@ def create_patient_document(payload: dict[str, Any], user: dict[str, Any]) -> di
     hospital_id = user.get("hospital_id") or patient_profile.get("hospital_id") or DEFAULT_HOSPITAL_ID
     assigned_doctor_id = patient_profile.get("assigned_doctor_id")
     assigned_doctor_name = patient_profile.get("assigned_doctor_name", "")
-    derived = _derive_summary(document_type, notes, content_text, file_name=file_name, content_type=content_type)
+    derived = _derive_summary(
+        document_type,
+        notes,
+        content_text,
+        file_name=file_name,
+        content_type=content_type,
+        file_data_url=file_data_url,
+    )
 
     return create_document_record(
         {
@@ -286,12 +292,31 @@ def create_patient_document(payload: dict[str, Any], user: dict[str, Any]) -> di
             "file_size": file_size,
             "storage_key": storage_key,
             "storage_gridfs_file_id": storage_gridfs_file_id,
-            "content_text": content_text[:4000],
+            "content_text": derived.get("content_text", content_text[:4000]),
             "summary": derived["summary"],
             "prescription_summary": derived.get("prescription_summary", ""),
             "medication_schedule": derived.get("medication_schedule", []),
             "extracted_tags": derived["extracted_tags"],
             "review_priority": derived["review_priority"],
+            "ocr_status": derived.get("ocr_status", "not_applicable"),
+            "ocr_source": derived.get("ocr_source", "manual_text"),
+            "ocr_text_excerpt": derived.get("ocr_text_excerpt", ""),
+            "extraction_model": derived.get("extraction_model", "ocr-nlp-prescription-v1"),
+            "extraction_confidence": derived.get("extraction_confidence", 0.0),
+            "ai_interpretation_notes": derived.get("ai_interpretation_notes", ""),
+            "document_domain": derived.get("document_domain", document_type),
+            "structured_findings": derived.get("structured_findings", []),
+            "abnormal_findings": derived.get("abnormal_findings", []),
+            "clinical_highlights": derived.get("clinical_highlights", []),
+            "follow_up_recommendations": derived.get("follow_up_recommendations", []),
+            "lab_alert_level": derived.get("lab_alert_level", "low"),
+            "abnormal_value_count": derived.get("abnormal_value_count", 0),
+            "analytes_detected": derived.get("analytes_detected", []),
+            "discharge_risk_level": derived.get("discharge_risk_level", "low"),
+            "discharge_risk_summary": derived.get("discharge_risk_summary", ""),
+            "discharge_key_diagnoses": derived.get("discharge_key_diagnoses", []),
+            "discharge_procedures": derived.get("discharge_procedures", []),
+            "discharge_red_flags": derived.get("discharge_red_flags", []),
             "status": "uploaded",
         }
     )
@@ -355,7 +380,14 @@ def create_clinician_document(payload: dict[str, Any], user: dict[str, Any]) -> 
         storage_key, storage_gridfs_file_id, saved_size = _save_file_data(_safe_file_name(file_name), file_data_url, content_type)
         file_size = saved_size or file_size
 
-    derived = _derive_summary(document_type, notes, content_text, file_name=file_name, content_type=content_type)
+    derived = _derive_summary(
+        document_type,
+        notes,
+        content_text,
+        file_name=file_name,
+        content_type=content_type,
+        file_data_url=file_data_url,
+    )
     document = create_document_record(
         {
             "appointment_id": appointment_id,
@@ -375,12 +407,31 @@ def create_clinician_document(payload: dict[str, Any], user: dict[str, Any]) -> 
             "file_size": file_size,
             "storage_key": storage_key,
             "storage_gridfs_file_id": storage_gridfs_file_id,
-            "content_text": content_text[:4000],
+            "content_text": derived.get("content_text", content_text[:4000]),
             "summary": derived["summary"],
             "prescription_summary": derived.get("prescription_summary", ""),
             "medication_schedule": derived.get("medication_schedule", []),
             "extracted_tags": derived["extracted_tags"],
             "review_priority": derived["review_priority"],
+            "ocr_status": derived.get("ocr_status", "not_applicable"),
+            "ocr_source": derived.get("ocr_source", "manual_text"),
+            "ocr_text_excerpt": derived.get("ocr_text_excerpt", ""),
+            "extraction_model": derived.get("extraction_model", "ocr-nlp-prescription-v1"),
+            "extraction_confidence": derived.get("extraction_confidence", 0.0),
+            "ai_interpretation_notes": derived.get("ai_interpretation_notes", ""),
+            "document_domain": derived.get("document_domain", document_type),
+            "structured_findings": derived.get("structured_findings", []),
+            "abnormal_findings": derived.get("abnormal_findings", []),
+            "clinical_highlights": derived.get("clinical_highlights", []),
+            "follow_up_recommendations": derived.get("follow_up_recommendations", []),
+            "lab_alert_level": derived.get("lab_alert_level", "low"),
+            "abnormal_value_count": derived.get("abnormal_value_count", 0),
+            "analytes_detected": derived.get("analytes_detected", []),
+            "discharge_risk_level": derived.get("discharge_risk_level", "low"),
+            "discharge_risk_summary": derived.get("discharge_risk_summary", ""),
+            "discharge_key_diagnoses": derived.get("discharge_key_diagnoses", []),
+            "discharge_procedures": derived.get("discharge_procedures", []),
+            "discharge_red_flags": derived.get("discharge_red_flags", []),
             "status": "uploaded",
             "source": "clinician",
         }

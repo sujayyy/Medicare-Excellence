@@ -1,6 +1,6 @@
 # Medicare Excellence
 
-Combined monorepo for the Medicare Excellence healthcare MVP.
+AI-powered hospital coordination platform for patient triage, clinician review, and hospital operations.
 
 ## Project structure
 
@@ -76,6 +76,22 @@ VITE_WHATSAPP_NUMBER=919999999999
 Frontend runs at:
 
 - `http://127.0.0.1:8080`
+
+## Share on another device
+
+If you want to open the app on another laptop or phone during demo:
+
+1. Keep the backend running on `5001`
+2. Start the frontend on `8080`
+3. Run:
+
+```bash
+ngrok http 8080
+```
+
+4. Share the generated `https://...ngrok-free.app` frontend URL
+
+The frontend now proxies API calls through `/api`, so you only need to share one frontend URL during development.
 
 ## Test accounts
 

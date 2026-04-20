@@ -1,7 +1,18 @@
+import { useEffect, useMemo, useState } from "react";
+
 const WHATSAPP_NUMBER = (import.meta.env.VITE_WHATSAPP_NUMBER || "919999999999").replace(/\D/g, "");
-const WHATSAPP_TEXT = encodeURIComponent(
-  "Hello, I need multilingual assistance with symptoms, prescriptions, or appointment support.",
-);
+const SUPPORT_DRAFT_STORAGE_KEY = "medicare-excellence.support-draft";
+const VOICE_LANGUAGE_STORAGE_KEY = "medicare-excellence.voice-language";
+
+const SUPPORT_TEMPLATE_BY_LANGUAGE: Record<string, string> = {
+  "en-IN": "Hello, I need help with symptoms, prescription understanding, or appointment support.",
+  "hi-IN": "Hello, I need healthcare help in Hindi for symptoms, prescription understanding, or appointment support.",
+  "kn-IN": "Hello, I need healthcare help in Kannada for symptoms, prescription understanding, or appointment support.",
+  "ta-IN": "Hello, I need healthcare help in Tamil for symptoms, prescription understanding, or appointment support.",
+  "te-IN": "Hello, I need healthcare help in Telugu for symptoms, prescription understanding, or appointment support.",
+  "ml-IN": "Hello, I need healthcare help in Malayalam for symptoms, prescription understanding, or appointment support.",
+  "bn-IN": "Hello, I need healthcare help in Bengali for symptoms, prescription understanding, or appointment support.",
+};
 
 function WhatsAppIcon() {
   return (
@@ -13,9 +24,26 @@ function WhatsAppIcon() {
 }
 
 export default function SupportFab() {
+  const [whatsAppDraft, setWhatsAppDraft] = useState("");
+  const [voiceLanguage, setVoiceLanguage] = useState("en-IN");
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    setWhatsAppDraft(window.localStorage.getItem(SUPPORT_DRAFT_STORAGE_KEY) || "");
+    setVoiceLanguage(window.localStorage.getItem(VOICE_LANGUAGE_STORAGE_KEY) || "en-IN");
+  }, []);
+
+  const whatsAppHref = useMemo(() => {
+    const text = whatsAppDraft.trim() || SUPPORT_TEMPLATE_BY_LANGUAGE[voiceLanguage] || SUPPORT_TEMPLATE_BY_LANGUAGE["en-IN"];
+    return `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(text)}`;
+  }, [voiceLanguage, whatsAppDraft]);
+
   return (
     <a
-      href={`https://wa.me/${WHATSAPP_NUMBER}?text=${WHATSAPP_TEXT}`}
+      href={whatsAppHref}
       target="_blank"
       rel="noreferrer"
       className="fixed bottom-5 right-5 z-40 inline-flex h-14 w-14 items-center justify-center rounded-full bg-[#25D366] text-white shadow-[0_18px_40px_rgba(37,211,102,0.35)] transition-transform hover:scale-[1.04]"

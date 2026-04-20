@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { format } from "date-fns";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Calendar, Clock, FileText, Phone, UserRound } from "lucide-react";
+import { Calendar, Clock, FileText, MapPin, Phone, UserRound } from "lucide-react";
 
 import DashboardLayout from "@/components/DashboardLayout";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -11,24 +11,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/context/AuthContext";
-import { ApiError, createAppointment, getAppointments, getDoctors } from "@/lib/api";
+import { ApiError, createAppointment, getAppointments, getDoctors, getDoctorSlots } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
-
-
-const timeSlots = [
-  "09:00 AM",
-  "09:30 AM",
-  "10:00 AM",
-  "10:30 AM",
-  "11:00 AM",
-  "11:30 AM",
-  "02:00 PM",
-  "02:30 PM",
-  "03:00 PM",
-  "03:30 PM",
-  "04:00 PM",
-  "04:30 PM",
-];
 
 
 function formatDateTime(date?: string, time?: string) {
@@ -56,8 +40,7 @@ export default function AppointmentBooking() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [selectedDoctorId, setSelectedDoctorId] = useState("");
-  const [appointmentDate, setAppointmentDate] = useState(format(new Date(), "yyyy-MM-dd"));
-  const [appointmentTime, setAppointmentTime] = useState("");
+  const [selectedSlotId, setSelectedSlotId] = useState("");
   const [reason, setReason] = useState("");
   const [notes, setNotes] = useState("");
   const [bookingError, setBookingError] = useState("");
@@ -79,36 +62,29 @@ export default function AppointmentBooking() {
     [doctorsQuery.data?.doctors, selectedDoctorId],
   );
 
-  const bookedSlotsForDoctor = useMemo(() => {
-    const records = appointmentsQuery.data?.appointments || [];
-    if (!selectedDoctorId) {
-      return new Set<string>();
-    }
-    return new Set(
-      records
-        .filter(
-          (appointment) =>
-            appointment.assigned_doctor_id === selectedDoctorId &&
-            appointment.appointment_date === appointmentDate &&
-            appointment.status !== "cancelled",
-        )
-        .map((appointment) => appointment.appointment_time)
-        .filter(Boolean) as string[],
-    );
-  }, [appointmentsQuery.data?.appointments, selectedDoctorId, appointmentDate]);
+  const doctorSlotsQuery = useQuery({
+    queryKey: ["doctor-slots", selectedDoctorId],
+    queryFn: () => getDoctorSlots(token || "", selectedDoctorId),
+    enabled: Boolean(token && selectedDoctorId),
+  });
+
+  const availableSlots = doctorSlotsQuery.data?.slots || [];
+  const selectedSlot = useMemo(
+    () => availableSlots.find((slot) => slot.id === selectedSlotId),
+    [availableSlots, selectedSlotId],
+  );
 
   const createMutation = useMutation({
     mutationFn: () =>
       createAppointment(token || "", {
         doctor_id: selectedDoctorId,
-        appointment_date: appointmentDate,
-        appointment_time: appointmentTime,
+        slot_id: selectedSlotId,
         reason,
         notes,
       }),
     onSuccess: async () => {
       setBookingError("");
-      setAppointmentTime("");
+      setSelectedSlotId("");
       setReason("");
       setNotes("");
       await appointmentsQuery.refetch();
@@ -163,7 +139,10 @@ export default function AppointmentBooking() {
                     <button
                       key={doctor.id}
                       type="button"
-                      onClick={() => setSelectedDoctorId(doctor.id)}
+                      onClick={() => {
+                        setSelectedDoctorId(doctor.id);
+                        setSelectedSlotId("");
+                      }}
                       className={`rounded-2xl border p-4 text-left transition-all ${
                         isSelected ? "border-primary bg-accent shadow-card" : "border-border/60 bg-background hover:border-primary/40"
                       }`}
@@ -176,6 +155,14 @@ export default function AppointmentBooking() {
                         {doctor.doctor_code && <Badge variant="outline">{doctor.doctor_code}</Badge>}
                       </div>
                       <p className="mt-3 text-xs text-muted-foreground">{doctor.email}</p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <Badge variant="outline">{doctor.open_slot_count || 0} open slots</Badge>
+                        {doctor.next_open_slot && (
+                          <Badge variant="secondary">
+                            Next: {doctor.next_open_slot.date} · {doctor.next_open_slot.time}
+                          </Badge>
+                        )}
+                      </div>
                     </button>
                   );
                 })}
@@ -189,35 +176,50 @@ export default function AppointmentBooking() {
 
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">Appointment date</label>
-                  <Input type="date" value={appointmentDate} onChange={(event) => setAppointmentDate(event.target.value)} />
-                </div>
-                <div className="space-y-2">
                   <label className="text-sm font-medium text-foreground">Reason for visit</label>
                   <Input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Headache, fever, follow-up..." />
+                </div>
+                <div className="rounded-2xl border border-border/60 bg-muted/40 px-4 py-3">
+                  <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Chosen slot</p>
+                  <p className="mt-2 text-sm font-medium text-foreground">
+                    {selectedSlot ? `${selectedSlot.date} · ${selectedSlot.time}` : "Select an open slot below"}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {selectedSlot?.location || selectedSlot?.label || "Doctor-managed slot availability keeps this calendar realistic."}
+                  </p>
                 </div>
               </div>
 
               <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">Choose time slot</label>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
-                  {timeSlots.map((slot) => {
-                    const isBooked = bookedSlotsForDoctor.has(slot);
+                <label className="text-sm font-medium text-foreground">Choose an open slot</label>
+                {selectedDoctorId && availableSlots.length === 0 && !doctorSlotsQuery.isLoading && (
+                  <div className="rounded-2xl border border-dashed border-border/70 p-5 text-sm text-muted-foreground">
+                    This doctor has not published open slots yet. Ask the doctor or hospital admin to release appointment times.
+                  </div>
+                )}
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  {availableSlots.map((slot) => {
+                    const isBooked = !slot.is_available;
                     return (
                       <button
-                        key={slot}
+                        key={slot.id}
                         type="button"
                         disabled={isBooked}
-                        onClick={() => setAppointmentTime(slot)}
-                        className={`rounded-xl border px-3 py-2 text-sm transition-colors ${
+                        onClick={() => setSelectedSlotId(slot.id)}
+                        className={`rounded-2xl border px-4 py-3 text-left text-sm transition-colors ${
                           isBooked
-                            ? "cursor-not-allowed border-border/50 bg-muted/50 text-muted-foreground line-through"
-                            : appointmentTime === slot
+                            ? "cursor-not-allowed border-border/50 bg-muted/50 text-muted-foreground"
+                            : selectedSlotId === slot.id
                               ? "border-primary bg-accent text-primary"
                               : "border-border/60 bg-background hover:border-primary/50"
                         }`}
                       >
-                        {slot}
+                        <p className="font-medium">{slot.date} · {slot.time}</p>
+                        <p className="mt-1 text-xs opacity-80">{slot.label || "Consultation slot"}</p>
+                        <p className="mt-1 text-xs opacity-80">{slot.location || "Location shared after booking"}</p>
+                        <p className="mt-2 text-[11px] uppercase tracking-[0.16em] opacity-70">
+                          {slot.available_count ?? 0} open {slot.available_count === 1 ? "seat" : "seats"}
+                        </p>
                       </button>
                     );
                   })}
@@ -238,7 +240,7 @@ export default function AppointmentBooking() {
                 variant="hero"
                 size="lg"
                 className="w-full"
-                disabled={!selectedDoctorId || !appointmentDate || !appointmentTime || reason.trim().length < 3 || createMutation.isPending}
+                disabled={!selectedDoctorId || !selectedSlot || reason.trim().length < 3 || createMutation.isPending}
                 onClick={() => createMutation.mutate()}
               >
                 Confirm Appointment
@@ -263,6 +265,10 @@ export default function AppointmentBooking() {
                 <div className="flex items-center gap-3">
                   <Calendar className="h-4 w-4 text-primary" />
                   <span>{profile?.age ? `${profile.age} years` : "Age not added yet"}</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <MapPin className="h-4 w-4 text-primary" />
+                  <span>{selectedSlot?.location || "Location appears after you choose a slot"}</span>
                 </div>
                 <div className="rounded-2xl bg-muted/50 p-4">
                   <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Selected doctor</p>
@@ -297,6 +303,9 @@ export default function AppointmentBooking() {
                     </div>
                     <div className="mt-3 space-y-1 text-sm text-foreground">
                       <p className="flex items-center gap-2"><Clock className="h-4 w-4 text-primary" /> {formatDateTime(appointment.appointment_date, appointment.appointment_time)}</p>
+                      {appointment.appointment_location && (
+                        <p className="flex items-center gap-2"><MapPin className="h-4 w-4 text-primary" /> {appointment.appointment_location}</p>
+                      )}
                       <p className="flex items-center gap-2"><FileText className="h-4 w-4 text-primary" /> {appointment.reason || "No reason recorded"}</p>
                       {appointment.patient_notes && <p className="text-muted-foreground">{appointment.patient_notes}</p>}
                     </div>

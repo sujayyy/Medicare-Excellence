@@ -6,6 +6,7 @@ from flask import current_app, g
 from models.base import serialize_document, utc_now
 from models.alert_model import create_alert
 from models.chat_model import append_chat_messages, get_chat_by_user_id, serialize_chat_history
+from models.document_model import list_documents
 from models.emergency_model import create_emergency_log
 from models.patient_model import (
     create_guest_patient_from_message,
@@ -15,15 +16,22 @@ from models.patient_model import (
 from models.user_model import DEFAULT_HOSPITAL_ID, get_doctor_for_specialty, sanitize_user
 from services.ai_service import get_ai_response
 from services.appointment_service import create_chat_appointment_request, list_doctor_directory
-from services.doctor_routing_service import get_specialty_label, infer_specialty
+from services.doctor_routing_service import get_specialty_label, get_specialty_match, infer_specialty
 from services.appointment_risk_service import build_appointment_risk_profile
+from services.clinical_safety_service import enrich_patient_with_clinical_safety
 from services.deterioration_service import build_deterioration_insights
 from services.deterioration_prediction_service import build_deterioration_prediction, enrich_deterioration_prediction
+from services.early_warning_service import enrich_patient_with_early_warning
+from services.followup_dropout_service import enrich_patient_with_followup_dropout_risk
 from services.follow_up_service import generate_follow_up_questions
 from services.follow_up_service import get_follow_up_intro
+from services.memory_service import retrieve_patient_memories, store_chat_memory
+from services.patient_twin_service import build_patient_digital_twin
+from services.readmission_risk_service import enrich_patient_with_readmission_risk
 from services.summary_service import build_patient_summary
 from services.symptom_extraction_service import extract_symptom_entities
 from services.triage_service import assess_triage
+from models.vital_model import list_vitals
 
 
 class ValidationError(ValueError):
@@ -80,7 +88,11 @@ def _get_patient_snapshot(user: Optional[dict[str, Any]]) -> Optional[dict[str, 
     return _safe_execute("load patient snapshot", lambda: get_patient_by_user_id(str(user["_id"])), default=None)
 
 
-def _build_ai_patient_context(patient: Optional[dict[str, Any]]) -> dict[str, Any]:
+def _build_ai_patient_context(
+    patient: Optional[dict[str, Any]],
+    *,
+    memory_context: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
     if not patient:
         return {}
 
@@ -92,6 +104,9 @@ def _build_ai_patient_context(patient: Optional[dict[str, Any]]) -> dict[str, An
         "assigned_doctor_name": patient.get("assigned_doctor_name"),
         "assigned_doctor_specialty": patient.get("assigned_doctor_specialty"),
         "visit_history": visit_history,
+        "semantic_memory_summary": (memory_context or {}).get("summary", ""),
+        "semantic_memory_count": len((memory_context or {}).get("items") or []),
+        "semantic_memory_model": (memory_context or {}).get("model", ""),
     }
 
 
@@ -184,13 +199,15 @@ def _is_cancel_message(user_message: str) -> bool:
     return normalized in APPOINTMENT_CANCEL_KEYWORDS
 
 
-def _format_doctor_choice_prompt(doctors: list[dict[str, Any]], specialty: str) -> str:
+def _format_doctor_choice_prompt(doctors: list[dict[str, Any]], specialty: str, *, match_reason: str = "") -> str:
     specialty_label = get_specialty_label(specialty)
     lines = [
         "**Appointment booking**",
         "- Step 6 of 6",
         f"- I found these {specialty_label} doctors for your concern:",
     ]
+    if match_reason:
+        lines.append(f"- Why this specialty: {match_reason}")
     for index, doctor in enumerate(doctors[:5], start=1):
         lines.append(f"{index}. {doctor['name']} ({doctor['doctor_code']})")
     lines.append("")
@@ -490,6 +507,16 @@ def _save_chat_if_possible(
             entities=entities,
         ),
     )
+    _safe_execute(
+        "save semantic memory",
+        lambda: store_chat_memory(
+            user,
+            user_message,
+            assistant_message,
+            triage=triage,
+            entities=entities,
+        ),
+    )
 
 
 def _triage_patient_payload(triage: dict[str, Any]) -> dict[str, Any]:
@@ -598,8 +625,8 @@ def _finalize_appointment_request(
     previous_patient: Optional[dict[str, Any]] = None,
 ) -> str:
     triage_message = details.get("reason") or details.get("initial_request") or user_message
-    triage = assess_triage(triage_message, appointment=True)
     entities = extract_symptom_entities(triage_message)
+    triage = assess_triage(triage_message, appointment=True, entities=entities)
     selected_doctor = details.get("selected_doctor") or {}
     if selected_doctor:
         hospital_id = _hospital_id_for_user(user)
@@ -742,8 +769,8 @@ def _finalize_appointment_request(
 
 def _start_appointment_intake(user_message: str, user: Optional[dict[str, Any]]) -> str:
     previous_patient = _get_patient_snapshot(user)
-    triage = assess_triage(user_message, appointment=True)
     entities = extract_symptom_entities(user_message)
+    triage = assess_triage(user_message, appointment=True, entities=entities)
     compact_details = _extract_patient_details(user_message)
     if compact_details.get("name") and compact_details.get("age") and compact_details.get("phone"):
         compact_details["initial_request"] = user_message
@@ -898,15 +925,17 @@ def _continue_appointment_intake(user_message: str, user: Optional[dict[str, Any
     data[stage] = value
 
     if stage == "reason":
-        specialty = infer_specialty(
+        specialty_match = get_specialty_match(
             user_message=f"{data.get('initial_request', '')} {value}".strip(),
             entities=extract_symptom_entities(value),
         )
+        specialty = specialty_match["specialty"]
         doctor_options = list_doctor_directory(user or {}, specialty=specialty)
         if not doctor_options:
             doctor_options = list_doctor_directory(user or {})
         if doctor_options:
             data["requested_specialty"] = specialty
+            data["requested_specialty_reason"] = specialty_match.get("reason", "")
             data["doctor_options"] = doctor_options[:5]
             next_stage = "doctor_choice"
             _safe_execute(
@@ -921,7 +950,11 @@ def _continue_appointment_intake(user_message: str, user: Optional[dict[str, Any
                     },
                 ),
             )
-            return _format_doctor_choice_prompt(data["doctor_options"], specialty)
+            return _format_doctor_choice_prompt(
+                data["doctor_options"],
+                specialty,
+                match_reason=data.get("requested_specialty_reason", ""),
+            )
         return (
             "**Appointment booking paused**\n"
             "- No doctor profiles are available in the current hospital setup yet.\n"
@@ -969,8 +1002,8 @@ def _continue_appointment_intake(user_message: str, user: Optional[dict[str, Any
 
 
 def _record_emergency(user_message: str, user: Optional[dict[str, Any]]) -> str:
-    triage = assess_triage(user_message, emergency=True)
     entities = extract_symptom_entities(user_message)
+    triage = assess_triage(user_message, emergency=True, entities=entities)
     follow_up_questions = generate_follow_up_questions(entities=entities, triage=triage, emergency=True)
     hospital_id, assigned_doctor_id, assigned_doctor_name, assigned_doctor_specialty = _resolve_care_assignment(
         user,
@@ -1087,7 +1120,7 @@ def process_chat_message(payload: dict[str, Any], *, user: Optional[dict[str, An
             user,
             user_message,
             response,
-            triage=assess_triage(user_message, emergency=True),
+            triage=assess_triage(user_message, emergency=True, entities=entities),
             entities=entities,
         )
         return response
@@ -1099,7 +1132,7 @@ def process_chat_message(payload: dict[str, Any], *, user: Optional[dict[str, An
             user,
             user_message,
             pending_appointment_response,
-            triage=assess_triage(user_message, appointment=True),
+            triage=assess_triage(user_message, appointment=True, entities=entities),
             entities=entities,
         )
         return pending_appointment_response
@@ -1111,19 +1144,28 @@ def process_chat_message(payload: dict[str, Any], *, user: Optional[dict[str, An
             user,
             user_message,
             response,
-            triage=assess_triage(user_message, appointment=True),
+            triage=assess_triage(user_message, appointment=True, entities=entities),
             entities=entities,
         )
         return response
 
-    triage = assess_triage(user_message)
     entities = extract_symptom_entities(user_message)
+    triage = assess_triage(user_message, entities=entities)
+    memory_context = retrieve_patient_memories(
+        user,
+        user_message,
+        entities=entities,
+        triage=triage,
+    )
     ai_response = get_ai_response(
         user_message,
         language_preference=language_preference,
         triage=triage,
         entities=entities,
-        patient_context=_build_ai_patient_context(_get_patient_snapshot(user)),
+        patient_context=_build_ai_patient_context(
+            _get_patient_snapshot(user),
+            memory_context=memory_context,
+        ),
     )
     follow_up_questions = generate_follow_up_questions(entities=entities, triage=triage)
     ai_response = _append_questions(ai_response, follow_up_questions)
@@ -1204,10 +1246,16 @@ def get_chat_history_response() -> dict[str, Any]:
 
     chat = get_chat_by_user_id(user["id"])
     serialized_chat = serialize_chat_history(chat)
-    patient = (
-        enrich_deterioration_prediction(serialize_document(get_patient_by_user_id(user["id"])))
-        if user["role"] == "patient"
-        else None
-    )
+    patient = None
+    if user["role"] == "patient":
+        patient = serialize_document(get_patient_by_user_id(user["id"]))
+        patient = enrich_deterioration_prediction(patient)
+        patient = enrich_patient_with_clinical_safety(patient) if patient else None
+        patient_vitals = list_vitals(patient_user_id=user["id"])[:3]
+        patient = enrich_patient_with_early_warning(patient, vitals=patient_vitals) if patient else None
+        patient_documents = list_documents(patient_user_id=user["id"])[:6]
+        patient = enrich_patient_with_readmission_risk(patient, vitals=patient_vitals, documents=patient_documents) if patient else None
+        patient = enrich_patient_with_followup_dropout_risk(patient) if patient else None
+    digital_twin = build_patient_digital_twin(user["id"]) if user["role"] == "patient" else None
 
-    return {"chat": serialized_chat, "messages": serialized_chat["messages"], "patient": patient}
+    return {"chat": serialized_chat, "messages": serialized_chat["messages"], "patient": patient, "digital_twin": digital_twin}

@@ -101,7 +101,11 @@ def _build_patient_context_note(patient_context: Optional[dict[str, Any]]) -> st
         )
 
     demographic_text = f"Profile: {', '.join(demographics)}." if demographics else ""
-    return " ".join(part for part in [demographic_text, latest_visit_note] if part).strip()
+    semantic_memory_note = ""
+    if patient_context.get("semantic_memory_summary"):
+        semantic_memory_note = f"Relevant prior history:\n{patient_context['semantic_memory_summary']}"
+
+    return " ".join(part for part in [demographic_text, latest_visit_note, semantic_memory_note] if part).strip()
 
 
 def _build_fallback_sections(

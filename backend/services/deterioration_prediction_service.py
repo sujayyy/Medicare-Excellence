@@ -39,6 +39,8 @@ def build_deterioration_prediction(
         deterioration.get("risk_trajectory") or previous_patient.get("risk_trajectory") or "stable"
     ).lower()
     red_flags = entities.get("red_flags") or previous_patient.get("red_flags") or []
+    visit_history = previous_patient.get("visit_history") or []
+    latest_vital_severity = (previous_patient.get("latest_vital_severity") or "").lower()
     appointment_risk_score = int(
         appointment_risk.get("appointment_risk_score")
         or previous_patient.get("appointment_risk_score")
@@ -79,6 +81,19 @@ def build_deterioration_prediction(
     if emergency_count > 0 or "emergency reported" in status:
         score += 14
         reasons.append("Recent emergency activity increases short-term deterioration risk")
+
+    if latest_vital_severity == "critical":
+        score += 18
+        reasons.append("Latest bedside vitals are critically abnormal")
+    elif latest_vital_severity == "high":
+        score += 12
+        reasons.append("Latest bedside vitals remain high risk")
+    elif latest_vital_severity == "medium":
+        score += 6
+
+    if len(visit_history) >= 3:
+        score += 6
+        reasons.append("Multiple prior visits suggest an unresolved or recurring clinical course")
 
     if appointments_requested > 0 and appointment_risk_score >= 60:
         score += 10

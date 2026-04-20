@@ -10,6 +10,13 @@ export default defineConfig(() => ({
     hmr: {
       overlay: false,
     },
+    proxy: {
+      "/api": {
+        target: "http://127.0.0.1:5001",
+        changeOrigin: true,
+        rewrite: (requestPath) => requestPath.replace(/^\/api/, ""),
+      },
+    },
   },
   plugins: [react()],
   resolve: {

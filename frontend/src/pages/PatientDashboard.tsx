@@ -1,40 +1,66 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { motion } from "framer-motion";
-import { Activity, AlertTriangle, ArrowUp, Brain, Calendar, Clock3, Download, HeartPulse, Languages, Mic, Paperclip, Plus, Sparkles, Square, Stethoscope, Volume2, X } from "lucide-react";
+import { Activity, AlertTriangle, ArrowUp, Brain, Calendar, Clock3, Download, FileText, HeartPulse, Languages, Mic, Paperclip, Plus, Sparkles, Square, Stethoscope, Volume2, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { useMutation, useQuery } from "@tanstack/react-query";
 
 import DashboardLayout from "@/components/DashboardLayout";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { ApiError, createVital, downloadDocumentFile, getChatHistory, getDocuments, getVitals, sendChatMessage, uploadDocument } from "@/lib/api";
-import type { ChatMessage, DocumentRecord, VisitHistoryEntry, VitalRecord } from "@/types/api";
+import type { ChatMessage, DocumentRecord, PatientTimelineEvent, VisitHistoryEntry, VitalRecord } from "@/types/api";
 
 const suggestions = [
-  "I have a persistent headache and mild fever",
-  "I want to book an appointment for tomorrow",
-  "I am feeling shortness of breath and chest discomfort",
-  "What precautions should I take for high blood pressure?",
+  "I have a mild fever and headache since yesterday",
+  "I want to book a doctor appointment for tomorrow",
+  "I feel shortness of breath and chest discomfort",
+  "Help me understand this prescription",
 ];
 
 const voiceLanguages = [
-  { value: "en-IN", label: "English" },
-  { value: "hi-IN", label: "Hindi" },
-  { value: "ta-IN", label: "Tamil" },
-  { value: "te-IN", label: "Telugu" },
-  { value: "ml-IN", label: "Malayalam" },
-  { value: "bn-IN", label: "Bengali" },
+  { value: "en-IN", label: "English", nativeLabel: "English", assistantLabel: "English (India)" },
+  { value: "hi-IN", label: "Hindi", nativeLabel: "हिन्दी", assistantLabel: "Hindi (India)" },
+  { value: "kn-IN", label: "Kannada", nativeLabel: "ಕನ್ನಡ", assistantLabel: "Kannada (India)" },
+  { value: "ta-IN", label: "Tamil", nativeLabel: "தமிழ்", assistantLabel: "Tamil (India)" },
+  { value: "te-IN", label: "Telugu", nativeLabel: "తెలుగు", assistantLabel: "Telugu (India)" },
+  { value: "ml-IN", label: "Malayalam", nativeLabel: "മലയാളം", assistantLabel: "Malayalam (India)" },
+  { value: "bn-IN", label: "Bengali", nativeLabel: "বাংলা", assistantLabel: "Bengali (India)" },
 ];
 
+const VOICE_LANGUAGE_STORAGE_KEY = "medicare-excellence.voice-language";
+const AUTO_SPEAK_STORAGE_KEY = "medicare-excellence.auto-speak";
+const SUPPORT_DRAFT_STORAGE_KEY = "medicare-excellence.support-draft";
+
+const SUPPORT_TEMPLATE_BY_LANGUAGE: Record<string, string> = {
+  "en-IN": "Hello, I need help with symptoms, prescription understanding, or appointment support.",
+  "hi-IN": "Hello, I need healthcare help in Hindi for symptoms, prescription understanding, or appointment support.",
+  "kn-IN": "Hello, I need healthcare help in Kannada for symptoms, prescription understanding, or appointment support.",
+  "ta-IN": "Hello, I need healthcare help in Tamil for symptoms, prescription understanding, or appointment support.",
+  "te-IN": "Hello, I need healthcare help in Telugu for symptoms, prescription understanding, or appointment support.",
+  "ml-IN": "Hello, I need healthcare help in Malayalam for symptoms, prescription understanding, or appointment support.",
+  "bn-IN": "Hello, I need healthcare help in Bengali for symptoms, prescription understanding, or appointment support.",
+};
+
+function getLanguageOption(value: string) {
+  return voiceLanguages.find((language) => language.value === value) || voiceLanguages[0];
+}
+
 function getLanguageLabel(value: string) {
-  return voiceLanguages.find((language) => language.value === value)?.label || "English";
+  return getLanguageOption(value).label;
+}
+
+function getLanguageAssistantPreference(value: string) {
+  const language = getLanguageOption(value);
+  return `${language.assistantLabel} (${language.nativeLabel})`;
 }
 
 function getTimestampLabel(value?: string) {
@@ -152,9 +178,14 @@ function readFileAsDataUrl(file: File) {
 function buildDocumentAssistantReply(document: DocumentRecord) {
   if (document.document_type === "prescription" && (document.medication_schedule?.length || 0) > 0) {
     const medications = (document.medication_schedule || [])
-      .map((entry) => `- ${entry.drug_name}: ${entry.dosage} · ${entry.timing}`)
+      .map((entry) => `- ${entry.drug_name}: ${entry.dosage} · ${entry.timing}${entry.duration ? ` · ${entry.duration}` : ""}`)
       .join("\n");
-    return `I reviewed the uploaded prescription and extracted this medicine plan:\n\n${medications}\n\nPlease confirm the label and dosage with your doctor or pharmacist before following it.`;
+    const modeNote =
+      document.ocr_status === "ai_handwriting_interpreted"
+        ? "I reviewed the uploaded handwritten prescription image and extracted this medicine plan:"
+        : "I reviewed the uploaded prescription and extracted this medicine plan:";
+    const interpretationNote = document.ai_interpretation_notes ? `\n\nNote: ${document.ai_interpretation_notes}` : "";
+    return `${modeNote}\n\n${medications}${interpretationNote}\n\nPlease confirm the drug name, dosage, and timing with your doctor or pharmacist before following it.`;
   }
 
   if (document.document_type === "prescription") {
@@ -207,6 +238,69 @@ function getAssistantMessageMeta(content: string) {
   }
 
   return null;
+}
+
+function getTimelineIcon(type: PatientTimelineEvent["type"]) {
+  if (type === "appointment") {
+    return Calendar;
+  }
+  if (type === "vital") {
+    return HeartPulse;
+  }
+  if (type === "document") {
+    return FileText;
+  }
+  if (type === "visit") {
+    return Stethoscope;
+  }
+  return Brain;
+}
+
+function getPatientNextStepSummary({
+  triageLabel,
+  earlyWarningPriority,
+  careCoordinatorStatus,
+  followupDueAt,
+}: {
+  triageLabel?: string;
+  earlyWarningPriority?: string;
+  careCoordinatorStatus?: string;
+  followupDueAt?: string;
+}) {
+  const normalizedCoordinator = (careCoordinatorStatus || "").toLowerCase();
+
+  if (triageLabel === "Critical" || earlyWarningPriority === "Critical") {
+    return {
+      title: "Urgent follow-up needed",
+      body: "Your latest care signals suggest this concern needs faster review. Please contact your care team or seek urgent help if symptoms are getting worse.",
+    };
+  }
+
+  if (triageLabel === "High" || earlyWarningPriority === "High") {
+    return {
+      title: "Priority review recommended",
+      body: "Your symptoms should be reviewed soon. Keep your phone nearby in case the hospital team reaches out and avoid delaying the next appointment.",
+    };
+  }
+
+  if (normalizedCoordinator === "contacted" || normalizedCoordinator === "rescheduled") {
+    return {
+      title: "Care team follow-up is in progress",
+      body: "Your reminder workflow is active. Please check your messages and confirm the next available slot if a reschedule has been offered.",
+    };
+  }
+
+  if (followupDueAt) {
+    return {
+      title: "Upcoming review to keep on track",
+      body: "Your next follow-up window is already set. Use the reminder center below to stay aligned with the care plan and respond if the team contacts you.",
+    };
+  }
+
+  return {
+    title: "Routine monitoring is active",
+    body: "Keep sharing symptoms, vitals, and documents as needed. The assistant and care team will use them to keep your timeline and follow-up plan current.",
+  };
 }
 
 function selectPreferredVoice(voices: SpeechSynthesisVoice[], requestedLanguage: string) {
@@ -277,10 +371,23 @@ export default function PatientDashboard() {
   const [documentNotes, setDocumentNotes] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [documentError, setDocumentError] = useState("");
-  const [voiceLanguage, setVoiceLanguage] = useState("en-IN");
+  const [voiceLanguage, setVoiceLanguage] = useState(() => {
+    if (typeof window === "undefined") {
+      return "en-IN";
+    }
+    return window.localStorage.getItem(VOICE_LANGUAGE_STORAGE_KEY) || "en-IN";
+  });
   const [voiceError, setVoiceError] = useState("");
   const [isListening, setIsListening] = useState(false);
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
+  const [autoSpeakReplies, setAutoSpeakReplies] = useState(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    return window.localStorage.getItem(AUTO_SPEAK_STORAGE_KEY) === "true";
+  });
+  const [speechRecognitionSupported, setSpeechRecognitionSupported] = useState(false);
+  const [speechPlaybackSupported, setSpeechPlaybackSupported] = useState(false);
   const [vitalForm, setVitalForm] = useState({
     pulse: "",
     spo2: "",
@@ -295,6 +402,8 @@ export default function PatientDashboard() {
   const recognitionRef = useRef<any>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const historyHydratedRef = useRef(false);
+  const lastAutoSpokenMessageRef = useRef("");
 
   const historyQuery = useQuery({
     queryKey: ["chat-history", user?.id],
@@ -409,6 +518,42 @@ export default function PatientDashboard() {
   }, [historyQuery.data]);
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const SpeechRecognitionCtor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    setSpeechRecognitionSupported(Boolean(SpeechRecognitionCtor));
+    setSpeechPlaybackSupported(Boolean(window.speechSynthesis));
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(VOICE_LANGUAGE_STORAGE_KEY, voiceLanguage);
+  }, [voiceLanguage]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(AUTO_SPEAK_STORAGE_KEY, autoSpeakReplies ? "true" : "false");
+  }, [autoSpeakReplies]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const baseText = input.trim()
+      ? `Hello, I need healthcare assistance in ${getLanguageOption(voiceLanguage).label}. Current concern: ${input.trim()}`
+      : SUPPORT_TEMPLATE_BY_LANGUAGE[voiceLanguage] || SUPPORT_TEMPLATE_BY_LANGUAGE["en-IN"];
+    const attachmentHint = selectedFile ? ` I also want help with the uploaded ${documentType.replace(/_/g, " ")}.` : "";
+    window.localStorage.setItem(SUPPORT_DRAFT_STORAGE_KEY, `${baseText}${attachmentHint}`.trim());
+  }, [input, selectedFile, documentType, voiceLanguage]);
+
+  useEffect(() => {
     scrollRef.current?.scrollTo({
       top: scrollRef.current.scrollHeight,
       behavior: "smooth",
@@ -427,6 +572,7 @@ export default function PatientDashboard() {
   }, [input]);
 
   const patientProfile = historyQuery.data?.patient || profile;
+  const digitalTwin = historyQuery.data?.digital_twin;
   const messageCount = messages.length;
   const conversationCount = Math.ceil(messageCount / 2);
   const triageScore = patientProfile?.triage_score ?? historyQuery.data?.chat?.latest_triage?.triage_score ?? 20;
@@ -458,10 +604,60 @@ export default function PatientDashboard() {
     patientProfile?.deterioration_prediction_reason ||
     "No strong near-term deterioration signal is visible from the current record.";
   const predictedFollowupWindow = patientProfile?.predicted_followup_window || "Routine 72-hour review";
+  const earlyWarningScore = patientProfile?.early_warning_score ?? 0;
+  const earlyWarningPriority = patientProfile?.early_warning_priority || "Low";
+  const earlyWarningSummary =
+    patientProfile?.early_warning_summary || "No strong early-warning trigger is active from the current record.";
+  const earlyWarningResponse =
+    patientProfile?.early_warning_response || "Routine monitoring is appropriate unless symptoms worsen.";
+  const earlyWarningWindow =
+    patientProfile?.early_warning_monitoring_window || "Routine observation";
+  const earlyWarningComponents = displayList(patientProfile?.early_warning_components);
+  const readmissionRiskScore = patientProfile?.readmission_risk_score ?? 12;
+  const readmissionRiskLabel = patientProfile?.readmission_risk_label || "Low";
+  const readmissionRiskSummary =
+    patientProfile?.readmission_risk_summary || "No strong relapse or return-risk pattern is active from the current record.";
+  const readmissionRiskFactors = displayList(patientProfile?.readmission_risk_factors);
+  const relapseRiskWindow = patientProfile?.relapse_risk_window || "Routine 14-day follow-up";
+  const followupDropoutRiskScore = patientProfile?.followup_dropout_risk_score ?? 14;
+  const followupDropoutRiskLabel = patientProfile?.followup_dropout_risk_label || "Low";
+  const followupDropoutRiskSummary =
+    patientProfile?.followup_dropout_risk_summary || "No strong follow-up dropout pattern is active from the current record.";
+  const followupDropoutRiskFactors = displayList(patientProfile?.followup_dropout_risk_factors);
+  const followupOutreachWindow = patientProfile?.followup_outreach_window || "Routine reminder within 7 days";
+  const careCoordinatorStatus = patientProfile?.care_coordinator_status || "open";
+  const careCoordinatorNote = patientProfile?.care_coordinator_note || "";
+  const careCoordinatorUpdatedAt = patientProfile?.care_coordinator_updated_at;
+  const careCoordinatorUpdatedBy = patientProfile?.care_coordinator_updated_by || "Care team";
+  const careCoordinatorHistory = patientProfile?.care_coordinator_history || [];
+  const careOutreachHistory = patientProfile?.care_outreach_history || [];
+  const patientNextStep = getPatientNextStepSummary({
+    triageLabel,
+    earlyWarningPriority,
+    careCoordinatorStatus,
+    followupDueAt: patientProfile?.followup_due_at,
+  });
+  const medicationRiskLevel = patientProfile?.medication_risk_level || "Low";
+  const medicationRiskSummary =
+    patientProfile?.medication_risk_summary || "No active medication list is available yet for interaction analysis.";
+  const medicationInteractionFlags = displayList(patientProfile?.medication_interaction_flags);
+  const medicationContraindications = displayList(patientProfile?.medication_contraindications);
+  const medicationMonitoringActions = displayList(patientProfile?.medication_monitoring_actions);
+  const interactingMedications = displayList(patientProfile?.interacting_medications);
   const documents = documentsQuery.data?.documents || [];
   const vitals = vitalsQuery.data?.vitals || [];
   const latestVital = vitals[0];
   const visitHistory = patientProfile?.visit_history || [];
+  const careGaps = displayList(digitalTwin?.care_gaps);
+  const timelineEvents = digitalTwin?.timeline_events || [];
+  const whatsAppHref = useMemo(() => {
+    const baseText = input.trim()
+      ? `Hello, I need healthcare assistance in ${getLanguageOption(voiceLanguage).label}. Current concern: ${input.trim()}`
+      : SUPPORT_TEMPLATE_BY_LANGUAGE[voiceLanguage] || SUPPORT_TEMPLATE_BY_LANGUAGE["en-IN"];
+    const attachmentHint = selectedFile ? ` I also want help with the uploaded ${documentType.replace(/_/g, " ")}.` : "";
+    const number = (import.meta.env.VITE_WHATSAPP_NUMBER || "919999999999").replace(/\D/g, "");
+    return `https://wa.me/${number}?text=${encodeURIComponent(`${baseText}${attachmentHint}`.trim())}`;
+  }, [documentType, input, selectedFile, voiceLanguage]);
   const fadeUp = {
     hidden: { opacity: 0, y: 18 },
     visible: (index: number) => ({
@@ -495,10 +691,10 @@ export default function PatientDashboard() {
     recognition.onresult = (event: any) => {
       const transcript = event?.results?.[0]?.[0]?.transcript || "";
       if (transcript) {
-        setInput(transcript);
+        setInput((current) => (current.trim() ? `${current.trim()} ${transcript}` : transcript));
         toast({
           title: "Voice captured",
-          description: "Review the text and send it when you're ready.",
+          description: `Captured in ${getLanguageLabel(voiceLanguage)}. Review the text and send it when you're ready.`,
         });
       }
     };
@@ -512,12 +708,44 @@ export default function PatientDashboard() {
   }
 
   useEffect(() => {
+    document.title = "Medicare Excellence | Patient Portal";
+  }, []);
+
+  useEffect(() => {
     return () => {
       if (typeof window !== "undefined" && window.speechSynthesis) {
         window.speechSynthesis.cancel();
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (historyQuery.isLoading || messages.length === 0) {
+      return;
+    }
+
+    if (!historyHydratedRef.current) {
+      historyHydratedRef.current = true;
+      return;
+    }
+
+    if (!autoSpeakReplies || !speechPlaybackSupported) {
+      return;
+    }
+
+    const latestAssistantMessage = [...messages].reverse().find((message) => message.role === "assistant");
+    if (!latestAssistantMessage) {
+      return;
+    }
+
+    const identity = getMessageIdentity(latestAssistantMessage);
+    if (lastAutoSpokenMessageRef.current === identity) {
+      return;
+    }
+
+    lastAutoSpokenMessageRef.current = identity;
+    speakMessage(latestAssistantMessage.content, `assistant-auto-${latestAssistantMessage.created_at || identity}`);
+  }, [messages, autoSpeakReplies, historyQuery.isLoading, speechPlaybackSupported]);
 
   function speakMessage(content: string, messageId: string) {
     if (!content || typeof window === "undefined" || !window.speechSynthesis) {
@@ -655,7 +883,7 @@ export default function PatientDashboard() {
       }
 
       if (text) {
-        const response = await sendChatMessage(token, text, getLanguageLabel(voiceLanguage));
+        const response = await sendChatMessage(token, text, getLanguageAssistantPreference(voiceLanguage));
         setMessages((current) => [
           ...current,
           {
@@ -729,11 +957,18 @@ export default function PatientDashboard() {
                 Patient Care Workspace
               </div>
               <h1 className="mt-4 font-display text-3xl font-semibold tracking-[-0.04em] text-foreground sm:text-[2.35rem]">
-                Hello, {user?.name}
+                Patient Care Hub
               </h1>
               <p className="mt-2 max-w-2xl text-sm leading-7 text-muted-foreground">
-                Continue your AI care conversation, review prior messages, and monitor your latest care status in one place.
+                Hello, {user?.name}. Continue your care conversation, review what needs attention next, and keep your records in one calm workspace.
               </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {["Multilingual support", "Saved medical history", "Connected follow-up reminders"].map((item) => (
+                  <span key={item} className="rounded-full border border-white/75 bg-white/65 px-3 py-1.5 text-xs text-muted-foreground shadow-sm">
+                    {item}
+                  </span>
+                ))}
+              </div>
             </div>
             <div className="flex flex-wrap gap-2">
               <Badge variant="secondary">{patientProfile?.status || "Monitoring"}</Badge>
@@ -762,10 +997,10 @@ export default function PatientDashboard() {
 
         <motion.div variants={fadeUp} custom={1} className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {[
-            { label: "Messages Saved", value: String(messageCount), icon: Brain },
-            { label: "Triage Score", value: `${triageScore}/100`, icon: Stethoscope },
-            { label: "Appointments Requested", value: String(patientProfile?.appointments_requested || 0), icon: Calendar },
-            { label: "Emergency Flags", value: String(patientProfile?.emergency_count || 0), icon: AlertTriangle },
+            { label: "Messages saved", value: String(messageCount), icon: Brain },
+            { label: "Current triage", value: `${triageScore}/100`, icon: Stethoscope },
+            { label: "Appointments", value: String(patientProfile?.appointments_requested || 0), icon: Calendar },
+            { label: "Urgency score", value: `${earlyWarningScore}/12`, icon: AlertTriangle },
           ].map((item) => (
             <Card key={item.label} className="metric-card metric-card-hover border-white/70 bg-card/90 shadow-card">
               <CardContent className="flex items-center gap-4 p-5">
@@ -787,12 +1022,12 @@ export default function PatientDashboard() {
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <CardTitle className="flex items-center gap-2 font-display text-lg">
                   <Brain className="h-5 w-5 text-primary" />
-                  AI Health Assistant
+                  Care Assistant
                 </CardTitle>
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background/80 px-3 py-2 text-xs text-muted-foreground">
                     <Languages className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">Reply language</span>
+                    <span className="hidden sm:inline">Language</span>
                     <select
                       value={voiceLanguage}
                       onChange={(event) => setVoiceLanguage(event.target.value)}
@@ -800,12 +1035,44 @@ export default function PatientDashboard() {
                     >
                       {voiceLanguages.map((language) => (
                         <option key={language.value} value={language.value}>
-                          {language.label}
+                          {language.label} · {language.nativeLabel}
                         </option>
                       ))}
                     </select>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => setAutoSpeakReplies((current) => !current)}
+                    className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-xs transition-colors ${
+                      autoSpeakReplies
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                        : "border-border/60 bg-background/80 text-muted-foreground"
+                    }`}
+                  >
+                    <Volume2 className="h-3.5 w-3.5" />
+                    {autoSpeakReplies ? "Auto speak on" : "Auto speak off"}
+                  </button>
+                  <a
+                    href={whatsAppHref}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700 transition-colors hover:bg-emerald-100"
+                  >
+                    <Paperclip className="h-3.5 w-3.5" />
+                    Open WhatsApp
+                  </a>
                 </div>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                <span className="rounded-full border border-border/60 bg-background/80 px-3 py-1.5">
+                  Voice input: {speechRecognitionSupported ? "Ready" : "Not supported"}
+                </span>
+                <span className="rounded-full border border-border/60 bg-background/80 px-3 py-1.5">
+                  Voice replies: {speechPlaybackSupported ? "Ready" : "Not supported"}
+                </span>
+                <span className="rounded-full border border-border/60 bg-background/80 px-3 py-1.5">
+                  Active language: {getLanguageOption(voiceLanguage).nativeLabel}
+                </span>
               </div>
               {voiceError && <p className="text-sm text-destructive">{voiceError}</p>}
             </CardHeader>
@@ -824,16 +1091,16 @@ export default function PatientDashboard() {
                     </div>
                     <h3 className="font-display text-xl font-semibold text-foreground">How can I help today?</h3>
                     <p className="mt-2 max-w-md text-sm text-muted-foreground">
-                      Ask about symptoms, request an appointment, speak in your language, or upload a prescription for medicine guidance.
+                      Ask about symptoms, request an appointment, speak in your language, or upload a prescription for guidance.
                     </p>
                     <div className="mt-6 grid w-full max-w-2xl gap-3 sm:grid-cols-2">
                       {suggestions.map((suggestion) => (
                         <button
                           key={suggestion}
                           onClick={() => handleSend(suggestion)}
-                          className="rounded-2xl border border-border/60 bg-background p-4 text-left text-sm shadow-card transition-colors hover:bg-accent"
+                          className="rounded-3xl border border-slate-200/80 bg-gradient-to-br from-white to-sky-50/60 p-4 text-left text-sm shadow-[0_10px_28px_rgba(15,23,42,0.05)] transition-all hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-[0_16px_34px_rgba(59,167,230,0.12)]"
                         >
-                          {suggestion}
+                          <span className="block font-medium text-foreground">{suggestion}</span>
                         </button>
                       ))}
                     </div>
@@ -956,7 +1223,7 @@ export default function PatientDashboard() {
                         <X className="h-4 w-4" />
                       </button>
                       <p className="basis-full text-xs text-muted-foreground">
-                        Prescription analysis works best when the file name or your message includes medicine details.
+                        Handwritten prescription photos and scans are supported. You can continue the same concern in WhatsApp too.
                       </p>
                     </div>
                   )}
@@ -980,7 +1247,7 @@ export default function PatientDashboard() {
                           value={input}
                           onChange={(event) => setInput(event.target.value)}
                           onKeyDown={handleComposerKeyDown}
-                          placeholder="Message Medicare Excellence..."
+                          placeholder={`Describe your health concern in ${getLanguageLabel(voiceLanguage)}...`}
                           disabled={isSending}
                           rows={1}
                           className="min-h-0 resize-none overflow-y-auto border-0 bg-transparent px-1.5 py-1 text-base leading-6 text-slate-900 placeholder:text-[15px] placeholder:text-slate-400 focus-visible:ring-0 focus-visible:ring-offset-0"
@@ -1015,6 +1282,10 @@ export default function PatientDashboard() {
                         </button>
                       </div>
                     </div>
+                    <div className="flex flex-wrap items-center justify-between gap-2 px-2 pt-1 text-[11px] text-muted-foreground">
+                      <span>Press Enter to send. Use Shift + Enter for a new line.</span>
+                      <span>Prescription photos and medical reports are supported.</span>
+                    </div>
                   </div>
                 </form>
               </div>
@@ -1024,78 +1295,89 @@ export default function PatientDashboard() {
           <div className="space-y-6">
             <Card className="border-border/60 bg-card/95 shadow-card">
               <CardHeader>
-                <CardTitle className="font-display text-lg">Health Snapshot</CardTitle>
+                <CardTitle className="font-display text-lg">Today's Care Summary</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4 text-sm">
-                <div className="rounded-2xl bg-muted/50 p-4">
-                  <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Patient profile</p>
-                  <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-                    <div>
-                      <p className="text-xs text-muted-foreground">Date of birth</p>
-                      <p className="mt-1 text-sm text-foreground">{patientProfile?.dob ? formatDateOnly(patientProfile.dob) : "Not shared"}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Age</p>
-                      <p className="mt-1 text-sm text-foreground">{patientProfile?.age ?? "Not available"}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Gender</p>
-                      <p className="mt-1 text-sm text-foreground">{formatLabel(patientProfile?.gender)}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Phone</p>
-                      <p className="mt-1 text-sm text-foreground">{patientProfile?.phone || "Not shared"}</p>
+                <div className="rounded-3xl border border-sky-200/70 bg-gradient-to-br from-sky-50 via-white to-emerald-50/70 p-5 shadow-[0_16px_34px_rgba(59,167,230,0.08)]">
+                  <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Next best step</p>
+                  <p className="mt-2 text-base font-semibold text-foreground">{patientNextStep.title}</p>
+                  <p className="mt-2 text-sm text-muted-foreground">{patientNextStep.body}</p>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-2xl bg-gradient-to-br from-white to-sky-50/70 p-4 shadow-sm">
+                    <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Current care</p>
+                    <div className="mt-3 flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-lg font-semibold text-foreground">{patientProfile?.status || "Monitoring"}</p>
+                        <p className="mt-1 text-sm text-muted-foreground">{recommendedAction}</p>
+                      </div>
+                      <Badge variant={getRiskBadgeVariant(triageLabel)}>{triageLabel}</Badge>
                     </div>
                   </div>
-                </div>
-                <div className="rounded-2xl bg-muted/50 p-4">
-                  <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Current status</p>
-                  <p className="mt-2 text-lg font-semibold text-foreground">{patientProfile?.status || "Monitoring"}</p>
-                </div>
-                <div className="rounded-2xl bg-muted/50 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Latest triage assessment</p>
-                      <p className="mt-2 text-lg font-semibold text-foreground">{triageLabel}</p>
-                    </div>
-                    <Badge variant={getRiskBadgeVariant(triageLabel)}>{triageScore}/100</Badge>
+                  <div className="rounded-2xl bg-gradient-to-br from-white to-emerald-50/70 p-4 shadow-sm">
+                    <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Next review</p>
+                    <p className="mt-3 text-lg font-semibold text-foreground">{predictedFollowupWindow}</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {patientProfile?.followup_due_at ? getExactTimestamp(patientProfile.followup_due_at) : "The care team will set this after review."}
+                    </p>
                   </div>
-                  <p className="mt-3 text-foreground">{triageReason}</p>
-                  <p className="mt-2 text-sm text-muted-foreground">{recommendedAction}</p>
-                </div>
-                <div className="rounded-2xl bg-muted/50 p-4">
-                  <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Extracted symptom details</p>
-                  <div className="mt-3 space-y-3">
-                    <div>
-                      <p className="text-xs text-muted-foreground">Symptoms</p>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {symptoms.length > 0 ? (
-                          symptoms.map((symptom) => (
-                            <Badge key={symptom} variant="outline">
-                              {symptom}
-                            </Badge>
-                          ))
-                        ) : (
-                          <span className="text-sm text-foreground">No structured symptoms detected yet.</span>
-                        )}
+                  <div className="rounded-2xl bg-muted/50 p-4">
+                    <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Reminder status</p>
+                    <div className="mt-3 flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-lg font-semibold text-foreground">{formatLabel(careCoordinatorStatus) || "On track"}</p>
+                        <p className="mt-1 text-sm text-muted-foreground">{followupOutreachWindow}</p>
                       </div>
+                      <Badge variant={getRiskBadgeVariant(followupDropoutRiskLabel)}>{followupDropoutRiskLabel}</Badge>
                     </div>
-                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                  </div>
+                  <div className="rounded-2xl bg-muted/50 p-4">
+                    <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Latest readings</p>
+                    <p className="mt-3 text-sm font-medium text-foreground">{latestVital ? latestVital.summary || "Vitals saved" : "No vitals shared yet"}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Last activity: {patientProfile?.last_interaction_at ? getExactTimestamp(patientProfile.last_interaction_at) : "No activity yet"}
+                    </p>
+                  </div>
+                </div>
+
+                <Accordion type="multiple" className="rounded-3xl border border-border/60 bg-gradient-to-br from-white to-slate-50/80 px-4 shadow-[0_12px_26px_rgba(15,23,42,0.04)]">
+                  <AccordionItem value="symptoms">
+                    <AccordionTrigger className="text-sm font-medium text-foreground">Symptoms and care insights</AccordionTrigger>
+                    <AccordionContent className="space-y-4 pb-4">
                       <div>
-                        <p className="text-xs text-muted-foreground">Duration</p>
-                        <p className="mt-1 text-sm text-foreground">{durationText}</p>
+                        <p className="text-xs text-muted-foreground">Symptoms</p>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {symptoms.length > 0 ? (
+                            symptoms.map((symptom) => (
+                              <Badge key={symptom} variant="outline">
+                                {symptom}
+                              </Badge>
+                            ))
+                          ) : (
+                            <span className="text-sm text-foreground">No structured symptoms detected yet.</span>
+                          )}
+                        </div>
                       </div>
-                      <div>
-                        <p className="text-xs text-muted-foreground">Body parts</p>
-                        <p className="mt-1 text-sm text-foreground">
-                          {bodyParts.length > 0 ? bodyParts.join(", ") : "No body area detected yet."}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-muted-foreground">Medications mentioned</p>
-                        <p className="mt-1 text-sm text-foreground">
-                          {medications.length > 0 ? medications.join(", ") : "No medications detected yet."}
-                        </p>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="rounded-xl border border-border/60 bg-background px-3 py-3">
+                          <p className="text-xs text-muted-foreground">Duration and body area</p>
+                          <p className="mt-1 text-sm text-foreground">{durationText}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">{bodyParts.length > 0 ? bodyParts.join(", ") : "No body area detected yet."}</p>
+                        </div>
+                        <div className="rounded-xl border border-border/60 bg-background px-3 py-3">
+                          <p className="text-xs text-muted-foreground">Medicines mentioned</p>
+                          <p className="mt-1 text-sm text-foreground">{medications.length > 0 ? medications.join(", ") : "No medicines mentioned yet."}</p>
+                        </div>
+                        <div className="rounded-xl border border-border/60 bg-background px-3 py-3">
+                          <p className="text-xs text-muted-foreground">Care outlook</p>
+                          <p className="mt-1 text-sm text-foreground">{predictionReason}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">{predictionLabel} · {predictionScore}/100</p>
+                        </div>
+                        <div className="rounded-xl border border-border/60 bg-background px-3 py-3">
+                          <p className="text-xs text-muted-foreground">Urgency score</p>
+                          <p className="mt-1 text-sm text-foreground">{earlyWarningSummary}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">{earlyWarningPriority} · {earlyWarningWindow}</p>
+                        </div>
                       </div>
                       <div>
                         <p className="text-xs text-muted-foreground">Red flags</p>
@@ -1111,313 +1393,528 @@ export default function PatientDashboard() {
                           )}
                         </div>
                       </div>
-                    </div>
-                  </div>
-                </div>
-                <div className="rounded-2xl bg-muted/50 p-4">
-                  <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Adaptive follow-up questions</p>
-                  <div className="mt-3 space-y-2">
-                    {followUpQuestions.length > 0 ? (
-                      followUpQuestions.map((question) => (
-                        <div key={question} className="rounded-xl border border-border/60 bg-background px-3 py-2 text-sm text-foreground">
-                          {question}
-                        </div>
-                      ))
-                    ) : (
-                      <p className="text-sm text-muted-foreground">
-                        Follow-up prompts will appear here when the assistant needs more context for triage.
-                      </p>
-                    )}
-                  </div>
-                </div>
-                <div className="rounded-2xl bg-muted/50 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Care outlook prediction</p>
-                    <Badge variant={getRiskBadgeVariant(predictionLabel)}>{predictionLabel}</Badge>
-                  </div>
-                  <p className="mt-3 text-sm text-foreground">{predictionReason}</p>
-                  <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-                    <div>
-                      <p className="text-xs text-muted-foreground">Prediction score</p>
-                      <p className="mt-1 text-sm text-foreground">{predictionScore}/100</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Recommended check-in</p>
-                      <p className="mt-1 text-sm text-foreground">{predictedFollowupWindow}</p>
-                    </div>
-                  </div>
-                </div>
-                <div className="rounded-2xl bg-muted/50 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Risk trend</p>
-                    <Badge variant={worseningFlag ? "destructive" : riskTrajectory === "rising" ? "secondary" : "outline"}>
-                      {worseningFlag ? "Worsening" : riskTrajectory}
-                    </Badge>
-                  </div>
-                  <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-                    <div>
-                      <p className="text-xs text-muted-foreground">Repeat symptom count</p>
-                      <p className="mt-1 text-sm text-foreground">{repeatSymptomCount}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Repeated symptoms</p>
-                      <p className="mt-1 text-sm text-foreground">
-                        {repeatedSymptoms.length > 0 ? repeatedSymptoms.join(", ") : "No repeated symptom pattern detected yet."}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
-                  <div className="rounded-2xl bg-muted/50 p-4">
-                    <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Latest vitals</p>
-                    <p className="mt-2 text-foreground">
-                      {latestVital ? latestVital.summary || "Vitals submitted" : "No vitals submitted yet"}
-                    </p>
-                    {latestVital && (
-                      <Badge variant={latestVital.severity === "critical" || latestVital.severity === "high" ? "destructive" : latestVital.severity === "medium" ? "secondary" : "outline"} className="mt-2">
-                        {latestVital.severity || "normal"}
-                      </Badge>
-                    )}
-                  </div>
-                  <div className="rounded-2xl bg-muted/50 p-4">
-                    <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Last interaction</p>
-                    <p className="mt-2 text-foreground">
-                      {patientProfile?.last_interaction_at ? getExactTimestamp(patientProfile.last_interaction_at) : "No activity yet"}
-                    </p>
-                  </div>
-                  <div className="rounded-2xl bg-muted/50 p-4">
-                    <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Latest summary</p>
-                    <p className="mt-2 line-clamp-4 text-foreground">
-                      {patientProfile?.last_summary || "Your recent symptoms and requests will appear here after you chat."}
-                    </p>
-                  </div>
-                </div>
-                <div className="rounded-2xl bg-muted/50 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Previous visits</p>
-                    <Badge variant="outline">{visitHistory.length}</Badge>
-                  </div>
-                  <div className="mt-3 space-y-3">
-                    {visitHistory.length > 0 ? (
-                      visitHistory.slice(0, 5).map((visit: VisitHistoryEntry) => (
-                        <div key={visit.appointment_id} className="rounded-xl border border-border/60 bg-background px-3 py-3">
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <p className="text-sm font-medium text-foreground">
-                                {visit.visit_reason || visit.diagnosis_summary || "Consultation review"}
-                              </p>
-                              <p className="text-xs text-muted-foreground">
-                                {visit.doctor_name || "Doctor"} {visit.doctor_specialty ? `· ${formatLabel(visit.doctor_specialty)}` : ""}
-                              </p>
-                            </div>
-                            <span className="text-[11px] text-muted-foreground">{getExactTimestamp(visit.completed_at)}</span>
+                      {followUpQuestions.length > 0 && (
+                        <div>
+                          <p className="text-xs text-muted-foreground">Helpful follow-up questions</p>
+                          <div className="mt-2 space-y-2">
+                            {followUpQuestions.slice(0, 3).map((question) => (
+                              <div key={question} className="rounded-xl border border-border/60 bg-background px-3 py-2 text-sm text-foreground">
+                                {question}
+                              </div>
+                            ))}
                           </div>
-                          <p className="mt-2 text-xs text-muted-foreground">
-                            {visit.follow_up_plan || visit.prescription_summary || visit.vitals_summary || visit.consultation_notes || "Visit details saved for future care context."}
-                          </p>
-                        </div>
-                      ))
-                    ) : (
-                      <p className="text-sm text-muted-foreground">
-                        Completed doctor visits will appear here and help the assistant remember your care history.
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="border-border/60 bg-card/95 shadow-card">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 font-display text-lg">
-                  <HeartPulse className="h-5 w-5 text-primary" />
-                  Vitals Tracker
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {vitalError && (
-                  <Alert variant="destructive">
-                    <AlertDescription>{vitalError}</AlertDescription>
-                  </Alert>
-                )}
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {[
-                    { key: "pulse", label: "Pulse", placeholder: "72" },
-                    { key: "spo2", label: "SpO2", placeholder: "98" },
-                    { key: "temperature", label: "Temperature", placeholder: "98.6" },
-                    { key: "systolic_bp", label: "Systolic BP", placeholder: "120" },
-                    { key: "diastolic_bp", label: "Diastolic BP", placeholder: "80" },
-                    { key: "glucose", label: "Glucose", placeholder: "110" },
-                  ].map((field) => (
-                    <Input
-                      key={field.key}
-                      value={vitalForm[field.key as keyof typeof vitalForm] as string}
-                      onChange={(event) =>
-                        setVitalForm((current) => ({ ...current, [field.key]: event.target.value }))
-                      }
-                      placeholder={`${field.label} (${field.placeholder})`}
-                      disabled={vitalMutation.isPending}
-                    />
-                  ))}
-                </div>
-                <textarea
-                  value={vitalForm.notes}
-                  onChange={(event) => setVitalForm((current) => ({ ...current, notes: event.target.value }))}
-                  placeholder="Optional notes like dizziness, fasting reading, or taken after medication."
-                  disabled={vitalMutation.isPending}
-                  className="min-h-[100px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                />
-                <Button
-                  variant="hero"
-                  disabled={vitalMutation.isPending}
-                  onClick={() => {
-                    setVitalError("");
-                    vitalMutation.mutate();
-                  }}
-                >
-                  {vitalMutation.isPending ? "Saving..." : "Save Vitals"}
-                </Button>
-                <div className="space-y-3">
-                  {vitals.length === 0 && (
-                    <p className="text-sm text-muted-foreground">Recent vital readings will appear here after you submit them.</p>
-                  )}
-                  {vitals.slice(0, 4).map((vital: VitalRecord) => (
-                    <div key={vital.id} className="rounded-2xl border border-border/60 p-4">
-                      <div className="mb-2 flex items-start justify-between gap-3">
-                        <div>
-                          <p className="font-medium text-foreground">
-                            Pulse {vital.pulse} · SpO2 {vital.spo2}% · Temp {vital.temperature}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            BP {vital.systolic_bp}/{vital.diastolic_bp} · Glucose {vital.glucose}
-                          </p>
-                        </div>
-                        <Badge variant={vital.severity === "critical" || vital.severity === "high" ? "destructive" : vital.severity === "medium" ? "secondary" : "outline"}>
-                          {vital.severity || "normal"}
-                        </Badge>
-                      </div>
-                      <p className="text-sm text-foreground">{vital.summary || "No summary available."}</p>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {(vital.anomaly_flags || []).map((flag) => (
-                          <Badge key={flag} variant="outline">
-                            {flag}
-                          </Badge>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="border-border/60 bg-card/95 shadow-card">
-              <CardHeader>
-                <CardTitle className="font-display text-lg">Medical Documents & Prescriptions</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {documentError && (
-                  <Alert variant="destructive">
-                    <AlertDescription>{documentError}</AlertDescription>
-                  </Alert>
-                )}
-                <div className="space-y-3 rounded-2xl bg-muted/50 p-4">
-                  <Input
-                    value={documentTitle}
-                    onChange={(event) => setDocumentTitle(event.target.value)}
-                    placeholder="Document title, e.g. CBC Lab Report"
-                    disabled={uploadMutation.isPending}
-                  />
-                  <select
-                    value={documentType}
-                    onChange={(event) => setDocumentType(event.target.value)}
-                    disabled={uploadMutation.isPending}
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  >
-                    <option value="lab_report">Lab Report</option>
-                    <option value="prescription">Prescription</option>
-                    <option value="discharge_note">Discharge Note</option>
-                    <option value="insurance">Insurance</option>
-                    <option value="other">Other</option>
-                  </select>
-                  <textarea
-                    value={documentNotes}
-                    onChange={(event) => setDocumentNotes(event.target.value)}
-                    placeholder="Add context or paste prescription text here for medicine extraction."
-                    disabled={uploadMutation.isPending}
-                    className="min-h-[110px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  />
-                  <input
-                    type="file"
-                    disabled={uploadMutation.isPending}
-                    onChange={(event) => setSelectedFile(event.target.files?.[0] || null)}
-                    className="block w-full text-sm text-muted-foreground file:mr-4 file:rounded-md file:border-0 file:bg-accent file:px-3 file:py-2 file:text-sm file:font-medium"
-                  />
-                  <Button
-                    variant="hero"
-                    disabled={uploadMutation.isPending || !documentTitle.trim()}
-                    onClick={() => {
-                      setDocumentError("");
-                      uploadMutation.mutate();
-                    }}
-                  >
-                    {uploadMutation.isPending ? "Uploading..." : "Upload Document"}
-                  </Button>
-                </div>
-
-                <div className="space-y-3">
-                  {documents.length === 0 && (
-                    <p className="text-sm text-muted-foreground">
-                      Uploaded medical documents will appear here for you and your care team.
-                    </p>
-                  )}
-                  {documents.slice(0, 4).map((document: DocumentRecord) => (
-                    <div key={document.id} className="rounded-2xl border border-border/60 p-4">
-                      <div className="mb-2 flex items-start justify-between gap-3">
-                        <div>
-                          <p className="font-medium text-foreground">{document.title}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {document.file_name || "No file name"} · {formatFileSize(document.file_size)}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {document.storage_key && (
-                            <Button size="sm" variant="outline" onClick={() => void handleDocumentDownload(document)}>
-                              <Download className="h-3.5 w-3.5" />
-                              Open
-                            </Button>
-                          )}
-                          <Badge variant={document.review_priority === "Urgent" ? "destructive" : document.review_priority === "Priority" ? "secondary" : "outline"}>
-                            {document.review_priority || "Routine"}
-                          </Badge>
-                        </div>
-                      </div>
-                      <p className="text-sm text-foreground">{document.summary || "No document summary available yet."}</p>
-                      {document.document_type === "prescription" && (document.medication_schedule?.length || 0) > 0 && (
-                        <div className="mt-3 space-y-2 rounded-2xl bg-accent/40 p-3">
-                          <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Medication schedule</p>
-                          {(document.medication_schedule || []).map((entry) => (
-                            <div key={`${document.id}-${entry.drug_name}`} className="rounded-xl border border-border/60 bg-background px-3 py-2">
-                              <p className="text-sm font-medium text-foreground">{entry.drug_name}</p>
-                              <p className="text-xs text-muted-foreground">
-                                Dosage: {entry.dosage} · Timing: {entry.timing}
-                              </p>
-                            </div>
-                          ))}
                         </div>
                       )}
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {(document.extracted_tags || []).map((tag) => (
-                          <Badge key={tag} variant="outline">
-                            {tag}
-                          </Badge>
+                    </AccordionContent>
+                  </AccordionItem>
+
+                  <AccordionItem value="followup">
+                    <AccordionTrigger className="text-sm font-medium text-foreground">Follow-up and reminders</AccordionTrigger>
+                    <AccordionContent className="space-y-4 pb-4">
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="rounded-xl border border-border/60 bg-background px-3 py-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-xs text-muted-foreground">Return risk</p>
+                            <Badge variant={getRiskBadgeVariant(readmissionRiskLabel)}>{readmissionRiskLabel}</Badge>
+                          </div>
+                          <p className="mt-1 text-sm text-foreground">{readmissionRiskSummary}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">{relapseRiskWindow}</p>
+                        </div>
+                        <div className="rounded-xl border border-border/60 bg-background px-3 py-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-xs text-muted-foreground">Follow-up reliability</p>
+                            <Badge variant={getRiskBadgeVariant(followupDropoutRiskLabel)}>{followupDropoutRiskLabel}</Badge>
+                          </div>
+                          <p className="mt-1 text-sm text-foreground">{followupDropoutRiskSummary}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">{followupOutreachWindow}</p>
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-border/60 bg-background px-3 py-3">
+                        <p className="text-xs text-muted-foreground">Care-team reminder note</p>
+                        <p className="mt-1 text-sm text-foreground">
+                          {careCoordinatorNote ||
+                            (careCoordinatorStatus === "resolved"
+                              ? "Your latest follow-up reminder has already been completed."
+                              : `The care team may contact you within ${followupOutreachWindow.toLowerCase()} to keep your care plan on track.`)}
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Updated by {careCoordinatorUpdatedBy} {careCoordinatorUpdatedAt ? `· ${getExactTimestamp(careCoordinatorUpdatedAt)}` : ""}
+                        </p>
+                      </div>
+                      <div className="space-y-2">
+                        {(careOutreachHistory.length > 0 ? careOutreachHistory.slice(0, 2) : []).map((entry, index) => (
+                          <div key={`${entry.channel}-${entry.created_at || index}`} className="rounded-xl border border-border/60 bg-background px-3 py-2">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <p className="text-sm font-medium text-foreground">{formatLabel(entry.channel)} reminder</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {formatLabel(entry.status)} {entry.created_at ? `· ${getExactTimestamp(entry.created_at)}` : ""}
+                                </p>
+                              </div>
+                              {entry.preview_url ? (
+                                <a
+                                  href={entry.preview_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-xs font-medium text-primary underline-offset-4 hover:underline"
+                                >
+                                  Open
+                                </a>
+                              ) : null}
+                            </div>
+                          </div>
+                        ))}
+                        {careOutreachHistory.length === 0 && (
+                          <p className="text-sm text-muted-foreground">
+                            Reminder emails, WhatsApp handoffs, or care-team calls will appear here when they are sent.
+                          </p>
+                        )}
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+
+                  <AccordionItem value="history">
+                    <AccordionTrigger className="text-sm font-medium text-foreground">Profile and care history</AccordionTrigger>
+                    <AccordionContent className="space-y-4 pb-4">
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="rounded-xl border border-border/60 bg-background px-3 py-3">
+                          <p className="text-xs text-muted-foreground">Patient profile</p>
+                          <p className="mt-1 text-sm text-foreground">
+                            {patientProfile?.dob ? `${formatDateOnly(patientProfile.dob)} · ` : ""}
+                            {patientProfile?.age ?? "Age not shared"} · {formatLabel(patientProfile?.gender) || "Gender not shared"}
+                          </p>
+                          <p className="mt-1 text-xs text-muted-foreground">{patientProfile?.phone || "Phone not shared"}</p>
+                        </div>
+                        <div className="rounded-xl border border-border/60 bg-background px-3 py-3">
+                          <p className="text-xs text-muted-foreground">Medicine safety</p>
+                          <p className="mt-1 text-sm text-foreground">{medicationRiskSummary}</p>
+                          {interactingMedications.length > 0 && (
+                            <p className="mt-1 text-xs text-muted-foreground">{interactingMedications.slice(0, 4).join(", ")}</p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-border/60 bg-background px-3 py-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-xs text-muted-foreground">Care history</p>
+                          <Badge variant="outline">{timelineEvents.length} events</Badge>
+                        </div>
+                        <p className="mt-1 text-sm text-foreground">
+                          {digitalTwin?.journey_summary || "Your saved chats, visits, vitals, and documents help the care team continue from the right context."}
+                        </p>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <Badge variant="secondary">Messages {digitalTwin?.counts?.messages ?? 0}</Badge>
+                          <Badge variant="secondary">Visits {digitalTwin?.counts?.visits ?? 0}</Badge>
+                          <Badge variant="secondary">Vitals {digitalTwin?.counts?.vitals ?? 0}</Badge>
+                          <Badge variant="secondary">Documents {digitalTwin?.counts?.documents ?? 0}</Badge>
+                        </div>
+                        {careGaps.length > 0 && (
+                          <p className="mt-2 text-xs text-muted-foreground">Care gaps: {careGaps.slice(0, 3).join(" · ")}</p>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        {visitHistory.length > 0 ? (
+                          visitHistory.slice(0, 3).map((visit: VisitHistoryEntry) => (
+                            <div key={visit.appointment_id} className="rounded-xl border border-border/60 bg-background px-3 py-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <p className="text-sm font-medium text-foreground">
+                                    {visit.visit_reason || visit.diagnosis_summary || "Consultation review"}
+                                  </p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {visit.doctor_name || "Doctor"} {visit.doctor_specialty ? `· ${formatLabel(visit.doctor_specialty)}` : ""}
+                                  </p>
+                                </div>
+                                <span className="text-[11px] text-muted-foreground">{getExactTimestamp(visit.completed_at)}</span>
+                              </div>
+                              <p className="mt-2 text-xs text-muted-foreground">
+                                {visit.follow_up_plan || visit.prescription_summary || visit.vitals_summary || visit.consultation_notes || "Visit details saved for future care context."}
+                              </p>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-sm text-muted-foreground">
+                            Completed doctor visits will appear here and help the care team remember your history.
+                          </p>
+                        )}
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+                </Accordion>
+              </CardContent>
+            </Card>
+
+            <Card className="border-border/60 bg-card/95 shadow-card">
+              <CardHeader>
+                <CardTitle className="font-display text-lg">Health Records</CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  Keep daily readings, reports, and prescriptions together in one lighter, easier-to-scan area.
+                </p>
+              </CardHeader>
+              <CardContent>
+                <Tabs defaultValue="vitals" className="space-y-4">
+                  <TabsList className="grid h-auto w-full grid-cols-2 rounded-2xl bg-muted/40 p-1">
+                    <TabsTrigger value="vitals" className="rounded-xl py-2">Vitals</TabsTrigger>
+                    <TabsTrigger value="documents" className="rounded-xl py-2">Documents</TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="vitals" className="space-y-4">
+                    {vitalError && (
+                      <Alert variant="destructive">
+                        <AlertDescription>{vitalError}</AlertDescription>
+                      </Alert>
+                    )}
+                    <div className="rounded-3xl border border-border/60 bg-gradient-to-br from-white to-sky-50/60 p-4 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+                      <div className="mb-4 flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-accent">
+                          <HeartPulse className="h-4.5 w-4.5 text-primary" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium text-foreground">Daily Vitals</p>
+                          <p className="text-xs text-muted-foreground">Add the latest readings you want the care team to see.</p>
+                        </div>
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        {[
+                          { key: "pulse", label: "Pulse", placeholder: "72" },
+                          { key: "spo2", label: "SpO2", placeholder: "98" },
+                          { key: "temperature", label: "Temperature", placeholder: "98.6" },
+                          { key: "systolic_bp", label: "Systolic BP", placeholder: "120" },
+                          { key: "diastolic_bp", label: "Diastolic BP", placeholder: "80" },
+                          { key: "glucose", label: "Glucose", placeholder: "110" },
+                        ].map((field) => (
+                          <Input
+                            key={field.key}
+                            value={vitalForm[field.key as keyof typeof vitalForm] as string}
+                            onChange={(event) =>
+                              setVitalForm((current) => ({ ...current, [field.key]: event.target.value }))
+                            }
+                            placeholder={`${field.label} (${field.placeholder})`}
+                            disabled={vitalMutation.isPending}
+                            className="border-white/70 bg-white/90"
+                          />
                         ))}
                       </div>
+                      <textarea
+                        value={vitalForm.notes}
+                        onChange={(event) => setVitalForm((current) => ({ ...current, notes: event.target.value }))}
+                        placeholder="Optional notes like dizziness, fasting reading, or taken after medication."
+                        disabled={vitalMutation.isPending}
+                        className="mt-3 min-h-[100px] w-full rounded-md border border-white/70 bg-white/90 px-3 py-2 text-sm"
+                      />
+                      <Button
+                        variant="hero"
+                        className="mt-3"
+                        disabled={vitalMutation.isPending}
+                        onClick={() => {
+                          setVitalError("");
+                          vitalMutation.mutate();
+                        }}
+                      >
+                        {vitalMutation.isPending ? "Saving..." : "Save Vitals"}
+                      </Button>
                     </div>
-                  ))}
-                </div>
+                    <div className="space-y-3">
+                      {vitals.length === 0 && (
+                        <p className="text-sm text-muted-foreground">Recent vital readings will appear here after you submit them.</p>
+                      )}
+                      {vitals.slice(0, 4).map((vital: VitalRecord) => (
+                        <div key={vital.id} className="rounded-2xl border border-border/60 bg-background/90 p-4 shadow-sm">
+                          <div className="mb-2 flex items-start justify-between gap-3">
+                            <div>
+                              <p className="font-medium text-foreground">
+                                Pulse {vital.pulse} · SpO2 {vital.spo2}% · Temp {vital.temperature}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                BP {vital.systolic_bp}/{vital.diastolic_bp} · Glucose {vital.glucose}
+                              </p>
+                            </div>
+                            <Badge variant={vital.severity === "critical" || vital.severity === "high" ? "destructive" : vital.severity === "medium" ? "secondary" : "outline"}>
+                              {vital.severity || "normal"}
+                            </Badge>
+                          </div>
+                          <p className="text-sm text-foreground">{vital.summary || "No summary available."}</p>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {(vital.anomaly_flags || []).map((flag) => (
+                              <Badge key={flag} variant="outline">
+                                {flag}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value="documents" className="space-y-4">
+                    {documentError && (
+                      <Alert variant="destructive">
+                        <AlertDescription>{documentError}</AlertDescription>
+                      </Alert>
+                    )}
+                    <div className="rounded-3xl border border-border/60 bg-gradient-to-br from-white to-emerald-50/50 p-4 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+                      <div className="mb-4 flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-accent">
+                          <FileText className="h-4.5 w-4.5 text-primary" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium text-foreground">Reports and Prescriptions</p>
+                          <p className="text-xs text-muted-foreground">Upload prescriptions, lab reports, or discharge notes and keep them linked to your care history.</p>
+                        </div>
+                      </div>
+                      <div className="space-y-3">
+                        <Input
+                          value={documentTitle}
+                          onChange={(event) => setDocumentTitle(event.target.value)}
+                          placeholder="Document title, e.g. CBC Lab Report"
+                          disabled={uploadMutation.isPending}
+                          className="border-white/70 bg-white/90"
+                        />
+                        <select
+                          value={documentType}
+                          onChange={(event) => setDocumentType(event.target.value)}
+                          disabled={uploadMutation.isPending}
+                          className="flex h-10 w-full rounded-md border border-white/70 bg-white/90 px-3 py-2 text-sm"
+                        >
+                          <option value="lab_report">Lab Report</option>
+                          <option value="prescription">Prescription</option>
+                          <option value="discharge_note">Discharge Note</option>
+                          <option value="insurance">Insurance</option>
+                          <option value="other">Other</option>
+                        </select>
+                        <textarea
+                          value={documentNotes}
+                          onChange={(event) => setDocumentNotes(event.target.value)}
+                          placeholder="Add context or paste prescription text here for medicine extraction."
+                          disabled={uploadMutation.isPending}
+                          className="min-h-[110px] w-full rounded-md border border-white/70 bg-white/90 px-3 py-2 text-sm"
+                        />
+                        <input
+                          type="file"
+                          disabled={uploadMutation.isPending}
+                          onChange={(event) => setSelectedFile(event.target.files?.[0] || null)}
+                          className="block w-full text-sm text-muted-foreground file:mr-4 file:rounded-md file:border-0 file:bg-accent file:px-3 file:py-2 file:text-sm file:font-medium"
+                        />
+                        <Button
+                          variant="hero"
+                          disabled={uploadMutation.isPending || !documentTitle.trim()}
+                          onClick={() => {
+                            setDocumentError("");
+                            uploadMutation.mutate();
+                          }}
+                        >
+                          {uploadMutation.isPending ? "Uploading..." : "Upload Document"}
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="space-y-3">
+                      {documents.length === 0 && (
+                        <p className="text-sm text-muted-foreground">
+                          Uploaded medical documents will appear here for you and your care team.
+                        </p>
+                      )}
+                      {documents.slice(0, 4).map((document: DocumentRecord) => (
+                        <div key={document.id} className="rounded-2xl border border-border/60 bg-background/90 p-4 shadow-sm">
+                          <div className="mb-2 flex items-start justify-between gap-3">
+                            <div>
+                              <p className="font-medium text-foreground">{document.title}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {document.file_name || "No file name"} · {formatFileSize(document.file_size)}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {document.storage_key && (
+                                <Button size="sm" variant="outline" onClick={() => void handleDocumentDownload(document)}>
+                                  <Download className="h-3.5 w-3.5" />
+                                  Open
+                                </Button>
+                              )}
+                              <Badge variant={document.review_priority === "Urgent" ? "destructive" : document.review_priority === "Priority" ? "secondary" : "outline"}>
+                                {document.review_priority || "Routine"}
+                              </Badge>
+                            </div>
+                          </div>
+                          <p className="text-sm text-foreground">{document.summary || "No document summary available yet."}</p>
+                          {document.document_type === "lab_report" && (
+                            <div className="mt-3 rounded-2xl border border-border/60 bg-background/80 px-3 py-3">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Lab intelligence</p>
+                                <Badge variant={getRiskBadgeVariant(document.lab_alert_level === "critical" ? "Critical" : document.lab_alert_level === "high" ? "High" : document.lab_alert_level === "medium" ? "Medium" : "Low")}>
+                                  {document.lab_alert_level || "low"}
+                                </Badge>
+                              </div>
+                              <p className="mt-2 text-sm text-foreground">
+                                {document.abnormal_value_count ? `${document.abnormal_value_count} abnormal value(s) detected.` : "No abnormal lab value was strongly flagged automatically."}
+                              </p>
+                              {(document.abnormal_findings?.length || 0) > 0 && (
+                                <div className="mt-2 space-y-2">
+                                  {document.abnormal_findings?.slice(0, 3).map((item) => (
+                                    <div key={`${document.id}-lab-${item}`} className="rounded-xl border border-border/60 bg-muted/30 px-3 py-2 text-sm text-foreground">
+                                      {item}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          {document.document_type === "discharge_note" && (
+                            <div className="mt-3 rounded-2xl border border-border/60 bg-background/80 px-3 py-3">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Discharge risk summary</p>
+                                <Badge variant={getRiskBadgeVariant(document.discharge_risk_level === "high" ? "High" : document.discharge_risk_level === "medium" ? "Medium" : "Low")}>
+                                  {document.discharge_risk_level || "low"}
+                                </Badge>
+                              </div>
+                              <p className="mt-2 text-sm text-foreground">
+                                {document.discharge_risk_summary || "No high-risk discharge wording was auto-detected."}
+                              </p>
+                              {(document.discharge_red_flags?.length || 0) > 0 && (
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                  {document.discharge_red_flags?.slice(0, 3).map((item) => (
+                                    <Badge key={`${document.id}-flag-${item}`} variant="secondary">
+                                      {item}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          {document.document_type === "prescription" && (document.medication_schedule?.length || 0) > 0 && (
+                            <div className="mt-3 space-y-2 rounded-2xl bg-accent/40 p-3">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Medication schedule</p>
+                                <p className="text-xs text-muted-foreground">
+                                  Confidence: {Math.round((document.extraction_confidence || 0) * 100)}%
+                                </p>
+                              </div>
+                              {(document.medication_schedule || []).map((entry) => (
+                                <div key={`${document.id}-${entry.drug_name}`} className="rounded-xl border border-border/60 bg-background px-3 py-2">
+                                  <p className="text-sm font-medium text-foreground">{entry.drug_name}</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    Dosage: {entry.dosage} · Timing: {entry.timing}{entry.duration ? ` · Duration: ${entry.duration}` : ""}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {document.document_type === "prescription" && (
+                            <div className="mt-3 rounded-2xl border border-border/60 bg-background/80 px-3 py-3">
+                              <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Extraction details</p>
+                              <p className="mt-1 text-sm text-foreground">
+                                Source: {document.ocr_source ? document.ocr_source.replace(/_/g, " ") : "manual text"} · Status:{" "}
+                                {document.ocr_status ? document.ocr_status.replace(/_/g, " ") : "not available"}
+                              </p>
+                              {document.ai_interpretation_notes && (
+                                <p className="mt-2 text-sm text-foreground">
+                                  AI interpretation note: {document.ai_interpretation_notes}
+                                </p>
+                              )}
+                              {document.ocr_text_excerpt && (
+                                <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                                  Text preview: {document.ocr_text_excerpt}
+                                </p>
+                              )}
+                              {document.extraction_model && (
+                                <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                                  Model: {document.extraction_model.replace(/-/g, " ")}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {(document.extracted_tags || []).map((tag) => (
+                              <Badge key={tag} variant="outline">
+                                {tag}
+                              </Badge>
+                            ))}
+                          </div>
+                          {((document.follow_up_recommendations?.length || 0) > 0 || (document.discharge_key_diagnoses?.length || 0) > 0 || (document.discharge_procedures?.length || 0) > 0) && (
+                            <div className="mt-3 rounded-2xl bg-muted/40 p-3">
+                              {(document.discharge_key_diagnoses?.length || 0) > 0 && (
+                                <p className="text-sm text-foreground">
+                                  Diagnosis: {document.discharge_key_diagnoses?.slice(0, 2).join(" ")}
+                                </p>
+                              )}
+                              {(document.discharge_procedures?.length || 0) > 0 && (
+                                <p className="mt-2 text-sm text-foreground">
+                                  Procedure: {document.discharge_procedures?.slice(0, 2).join(" ")}
+                                </p>
+                              )}
+                              {(document.follow_up_recommendations?.length || 0) > 0 && (
+                                <p className="mt-2 text-xs text-muted-foreground">
+                                  Follow-up: {document.follow_up_recommendations?.slice(0, 2).join(" ")}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </TabsContent>
+                </Tabs>
               </CardContent>
             </Card>
           </div>
+        </motion.div>
+
+        <motion.div variants={fadeUp} custom={3}>
+          <Card className="border-border/60 bg-card/95 shadow-card">
+            <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2 font-display text-lg">
+                  <Activity className="h-5 w-5 text-primary" />
+                  Care Journey Timeline
+                </CardTitle>
+                <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
+                  Your saved chats, visits, vitals, and documents stay linked here so every future review starts with the right context.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="secondary">{digitalTwin?.care_phase || "Monitoring"}</Badge>
+                <Badge variant="outline">{timelineEvents.length} saved events</Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="rounded-3xl border border-border/60 bg-gradient-to-br from-white to-sky-50/50 p-4 shadow-[0_12px_28px_rgba(15,23,42,0.04)]">
+                <p className="text-sm text-foreground">
+                  {digitalTwin?.journey_summary || "As you continue using the assistant, your longitudinal care timeline will grow here automatically."}
+                </p>
+              </div>
+
+              {timelineEvents.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-border/60 px-4 py-8 text-center text-sm text-muted-foreground">
+                  Timeline events will appear here once you chat, upload a document, record vitals, or complete a doctor visit.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {timelineEvents.slice(0, 12).map((event) => {
+                    const TimelineIcon = getTimelineIcon(event.type);
+
+                    return (
+                      <div key={`${event.type}-${event.timestamp}-${event.title}`} className="rounded-3xl border border-border/60 bg-gradient-to-br from-white to-slate-50/70 p-4 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="flex items-start gap-3">
+                            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-accent">
+                              <TimelineIcon className="h-4.5 w-4.5 text-primary" />
+                            </div>
+                            <div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="text-sm font-semibold text-foreground">{event.title}</p>
+                                <Badge variant={getRiskBadgeVariant(event.severity)}>{formatLabel(event.severity)}</Badge>
+                              </div>
+                              <p className="mt-1 text-sm leading-6 text-muted-foreground">{event.detail}</p>
+                            </div>
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {getExactTimestamp(event.timestamp)}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </motion.div>
       </motion.div>
     </DashboardLayout>

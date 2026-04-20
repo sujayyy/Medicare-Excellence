@@ -7,6 +7,7 @@ import type {
   ChatHistoryResponse,
   DoctorAccessRequest,
   DoctorRecord,
+  DoctorSlot,
   DocumentRecord,
   EmergencyRecord,
   MeResponse,
@@ -15,7 +16,7 @@ import type {
   VitalRecord,
 } from "@/types/api";
 
-export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:5001").replace(/\/$/, "");
+export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
 
 export class ApiError extends Error {
   status: number;
@@ -141,6 +142,33 @@ export function getPatients(token: string) {
   return request<{ patients: PatientRecord[] }>("/patients", { token });
 }
 
+export function updateCareCoordination(
+  token: string,
+  patientId: string,
+  payload: { status: string; note?: string },
+) {
+  return request<{ patient: PatientRecord }>(`/patients/${patientId}/care-coordination`, {
+    method: "PATCH",
+    token,
+    body: JSON.stringify(payload),
+  });
+}
+
+export function sendCareOutreach(
+  token: string,
+  patientId: string,
+  payload: { channel: "email" | "whatsapp" | "phone"; note?: string },
+) {
+  return request<{ patient: PatientRecord; attempt: { preview_url?: string; status: string; channel: string } }>(
+    `/patients/${patientId}/care-coordination/reminder`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
 export function getEmergencies(token: string) {
   return request<{ emergencies: EmergencyRecord[] }>("/emergencies", { token });
 }
@@ -218,6 +246,32 @@ export function getDoctors(token: string, specialty?: string) {
   return request<{ doctors: DoctorRecord[] }>(`/doctors${query}`, { token });
 }
 
+export function getDoctorSlots(token: string, doctorId: string) {
+  return request<{ doctor: DoctorRecord; slots: DoctorSlot[] }>(`/doctor-slots?doctor_id=${encodeURIComponent(doctorId)}`, { token });
+}
+
+export function updateDoctorSlots(
+  token: string,
+  payload: {
+    doctor_id?: string;
+    slots: Array<{
+      id?: string;
+      date: string;
+      time: string;
+      label?: string;
+      location?: string;
+      capacity?: number;
+      status?: string;
+    }>;
+  },
+) {
+  return request<{ doctor: DoctorRecord; slots: DoctorSlot[] }>("/doctor-slots", {
+    method: "PUT",
+    token,
+    body: JSON.stringify(payload),
+  });
+}
+
 export function getAppointments(token: string) {
   return request<{ appointments: AppointmentRecord[] }>("/appointments", { token });
 }
@@ -226,8 +280,9 @@ export function createAppointment(
   token: string,
   payload: {
     doctor_id: string;
-    appointment_date: string;
-    appointment_time: string;
+    appointment_date?: string;
+    appointment_time?: string;
+    slot_id?: string;
     reason: string;
     notes?: string;
   },
@@ -250,6 +305,8 @@ export function updateAppointment(
     prescription_summary?: string;
     scan_summary?: string;
     follow_up_plan?: string;
+    safety_workflow_status?: string;
+    safety_workflow_note?: string;
   },
 ) {
   return request<{ appointment: AppointmentRecord }>(`/appointments/${appointmentId}`, {

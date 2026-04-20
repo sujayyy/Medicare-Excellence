@@ -7,17 +7,27 @@ SYMPTOM_PATTERNS = [
     "shortness of breath",
     "difficulty breathing",
     "headache",
+    "blurred vision",
     "fever",
     "cough",
     "dizziness",
+    "vertigo",
     "nausea",
     "vomiting",
     "abdominal pain",
     "back pain",
+    "joint pain",
+    "knee pain",
+    "neck pain",
+    "itching",
+    "anxiety",
+    "palpitation",
     "sore throat",
     "fatigue",
     "rash",
     "palpitations",
+    "blood in urine",
+    "heavy bleeding",
 ]
 
 BODY_PART_PATTERNS = [
@@ -32,6 +42,12 @@ BODY_PART_PATTERNS = [
     "back",
     "throat",
     "neck",
+    "eye",
+    "ear",
+    "nose",
+    "pelvis",
+    "joint",
+    "knee",
 ]
 
 MEDICATION_PATTERNS = [
@@ -44,6 +60,9 @@ MEDICATION_PATTERNS = [
     "insulin",
     "omeprazole",
     "cetirizine",
+    "thyroxine",
+    "amlodipine",
+    "losartan",
 ]
 
 RED_FLAG_PATTERNS = [
