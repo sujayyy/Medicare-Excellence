@@ -2,7 +2,8 @@ import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { format } from "date-fns";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, BellRing, CalendarClock, ClipboardList, Copy, Download, FileText, HeartPulse, MapPin, Plus, ShieldAlert, Sparkles, Stethoscope, Users } from "lucide-react";
+import { AlertTriangle, BellRing, CalendarClock, ClipboardList, Copy, Download, FileText, HeartPulse, MapPin, ShieldAlert, Sparkles, Stethoscope, Users } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 import DashboardLayout from "@/components/DashboardLayout";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
@@ -13,14 +14,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { useAuth } from "@/context/AuthContext";
 import {
   acknowledgeAlert,
@@ -29,21 +22,19 @@ import {
   downloadDocumentFile,
   getAnalyticsOverview,
   getAppointments,
-  getDoctorSlots,
   getDocuments,
   getEmergencies,
   getPatients,
   getStats,
   getVitals,
   updateAppointment,
-  updateDoctorSlots,
   sendCareOutreach,
   updateCareCoordination,
   uploadDocument,
 } from "@/lib/api";
 import { useLiveAlertNotifications } from "@/hooks/useLiveAlertNotifications";
 import { useToast } from "@/hooks/use-toast";
-import type { AppointmentRecord, DocumentRecord, DoctorSlot, PatientRecord, VitalRecord } from "@/types/api";
+import type { AppointmentRecord, DocumentRecord, PatientRecord, VitalRecord } from "@/types/api";
 
 function formatDate(value?: string) {
   if (!value) {
@@ -112,10 +103,6 @@ function getWorkflowBadgeVariant(status?: string) {
   return "outline" as const;
 }
 
-function formatAppointmentRiskScore(score?: number) {
-  return typeof score === "number" && score > 0 ? `${score}/100` : "Not scored yet";
-}
-
 function compactList(values?: string[]) {
   return values && values.length > 0 ? values.join(", ") : "Not extracted yet";
 }
@@ -123,13 +110,6 @@ function compactList(values?: string[]) {
 function isOperationalAppointmentOnly(patient: PatientRecord) {
   const status = (patient.status || "").toLowerCase();
   return status.includes("appointment") && (!patient.symptoms || patient.symptoms.length === 0) && (!patient.red_flags || patient.red_flags.length === 0);
-}
-
-function getSummaryPatients(patients: PatientRecord[]) {
-  return [...patients]
-    .filter((patient) => !isOperationalAppointmentOnly(patient))
-    .filter((patient) => patient.summary_headline || patient.soap_summary || patient.clinical_summary)
-    .slice(0, 4);
 }
 
 function getPrioritySchedulingPatients(patients: PatientRecord[]) {
@@ -250,19 +230,13 @@ type AppointmentWorkflowDraft = Partial<AppointmentRecord> & {
 
 export default function DoctorDashboard() {
   const { token, user } = useAuth();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [appointmentDrafts, setAppointmentDrafts] = useState<Record<string, AppointmentWorkflowDraft>>({});
   const [appointmentFiles, setAppointmentFiles] = useState<Record<string, File | null>>({});
   const [careCoordinatorNotes, setCareCoordinatorNotes] = useState<Record<string, string>>({});
   const [selectedWorkspaceAppointmentId, setSelectedWorkspaceAppointmentId] = useState("");
-  const [slotDraft, setSlotDraft] = useState({
-    date: format(new Date(), "yyyy-MM-dd"),
-    time: "09:00 AM",
-    label: "General consultation",
-    location: "Outpatient Room 1",
-    capacity: "1",
-  });
 
   const statsQuery = useQuery({
     queryKey: ["doctor-stats"],
@@ -304,12 +278,6 @@ export default function DoctorDashboard() {
     queryKey: ["doctor-analytics-overview"],
     queryFn: () => getAnalyticsOverview(token || ""),
     enabled: Boolean(token),
-  });
-
-  const doctorSlotsQuery = useQuery({
-    queryKey: ["doctor-slot-schedule", user?.id],
-    queryFn: () => getDoctorSlots(token || "", user?.id || ""),
-    enabled: Boolean(token && user?.id),
   });
 
   const { alertsQuery, alerts, liveAlert } = useLiveAlertNotifications({
@@ -354,36 +322,6 @@ export default function DoctorDashboard() {
       toast({
         variant: "destructive",
         title: "Unable to update appointment",
-        description: error instanceof ApiError ? error.message : "Please try again.",
-      });
-    },
-  });
-
-  const updateDoctorSlotsMutation = useMutation({
-    mutationFn: (slots: DoctorSlot[]) =>
-      updateDoctorSlots(token || "", {
-        doctor_id: user?.id,
-        slots: slots.map((slot) => ({
-          id: slot.id,
-          date: slot.date,
-          time: slot.time,
-          label: slot.label,
-          location: slot.location,
-          capacity: slot.capacity,
-          status: slot.status,
-        })),
-      }),
-    onSuccess: async () => {
-      await Promise.all([doctorSlotsQuery.refetch(), appointmentsQuery.refetch(), overviewQuery.refetch()]);
-      toast({
-        title: "Clinic slots updated",
-        description: "Your live booking schedule is now available to patients and the hospital team.",
-      });
-    },
-    onError: (error) => {
-      toast({
-        variant: "destructive",
-        title: "Unable to update slots",
         description: error instanceof ApiError ? error.message : "Please try again.",
       });
     },
@@ -502,10 +440,7 @@ export default function DoctorDashboard() {
   const vitals = vitalsQuery.data?.vitals || [];
   const appointments = appointmentsQuery.data?.appointments || [];
   const overview = overviewQuery.data;
-  const summaryPatients = getSummaryPatients(patients);
-  const prioritySchedulingPatients = getPrioritySchedulingPatients(patients);
   const recentVisitEntries = getRecentVisitEntries(patients);
-  const predictionWatchlist = overview?.prediction_watchlist || [];
   const outbreakClusters = overview?.outbreak_clusters || [];
   const reviewQueueSummary = overview?.review_queue_summary;
   const clinicalSafetyWatch = overview?.clinical_safety_watch || [];
@@ -518,12 +453,45 @@ export default function DoctorDashboard() {
   const followupDropoutWatchlist = overview?.followup_dropout_watchlist || [];
   const careCoordinatorSummary = overview?.care_coordinator_summary;
   const careCoordinatorQueue = overview?.care_coordinator_queue || [];
-  const doctorSlots = doctorSlotsQuery.data?.slots || [];
   const selectedWorkspaceAppointment =
     appointments.find((appointment) => appointment.id === selectedWorkspaceAppointmentId) || appointments[0] || null;
   const selectedWorkspacePatient = selectedWorkspaceAppointment
     ? patients.find((patient) => patient.user_id === selectedWorkspaceAppointment.patient_user_id || patient.email === selectedWorkspaceAppointment.patient_email)
     : null;
+  const doctorAppointmentIds = useMemo(() => new Set(appointments.map((appointment) => appointment.id)), [appointments]);
+  const doctorPatientUserIds = useMemo(
+    () => new Set(appointments.map((appointment) => appointment.patient_user_id).filter(Boolean)),
+    [appointments],
+  );
+  const doctorPatientEmails = useMemo(
+    () =>
+      new Set(
+        [
+          ...appointments.map((appointment) => appointment.patient_email),
+          ...patients.map((patient) => patient.email),
+        ].filter(Boolean),
+      ),
+    [appointments, patients],
+  );
+  const doctorDocuments = useMemo(
+    () =>
+      documents.filter((document) => {
+        if (document.assigned_doctor_id && user?.id && document.assigned_doctor_id === user.id) {
+          return true;
+        }
+        if (document.appointment_id && doctorAppointmentIds.has(document.appointment_id)) {
+          return true;
+        }
+        if (document.patient_user_id && doctorPatientUserIds.has(document.patient_user_id)) {
+          return true;
+        }
+        if (document.patient_email && doctorPatientEmails.has(document.patient_email)) {
+          return true;
+        }
+        return false;
+      }),
+    [documents, doctorAppointmentIds, doctorPatientEmails, doctorPatientUserIds, user?.id],
+  );
   const previousVisitHistory = [...(selectedWorkspacePatient?.visit_history || [])]
     .filter((visit) => visit.appointment_id !== selectedWorkspaceAppointment?.id)
     .sort((left, right) => (right.completed_at || "").localeCompare(left.completed_at || ""))
@@ -550,57 +518,37 @@ export default function DoctorDashboard() {
     }),
   };
 
-  const addDoctorSlot = () => {
-    if (!slotDraft.date || !slotDraft.time) {
-      toast({
-        variant: "destructive",
-        title: "Missing slot details",
-        description: "Add a date and time before publishing a slot.",
-      });
+  const jumpToSection = (sectionId: string) => {
+    const element = document.getElementById(sectionId);
+    if (!element) {
       return;
     }
 
-    const nextSlots: DoctorSlot[] = [
-      ...doctorSlots,
-      {
-        id: `${slotDraft.date}-${slotDraft.time}-${slotDraft.location}`.replace(/\s+/g, "-").toLowerCase(),
-        date: slotDraft.date,
-        time: slotDraft.time,
-        label: slotDraft.label,
-        location: slotDraft.location,
-        capacity: Math.max(1, Number(slotDraft.capacity || 1)),
-        status: "open",
-      },
-    ];
-    updateDoctorSlotsMutation.mutate(nextSlots);
-    setSlotDraft((current) => ({ ...current, label: "General consultation", location: current.location || "Outpatient Room 1", capacity: "1" }));
+    window.history.replaceState(null, "", `#${sectionId}`);
+    element.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
-  const removeDoctorSlot = (slotId: string) => {
-    updateDoctorSlotsMutation.mutate(doctorSlots.filter((slot) => slot.id !== slotId));
-  };
-
-  const exportWorkspaceDocument = (mode: "soap" | "summary") => {
-    if (!selectedWorkspaceAppointment) {
+  const exportAppointmentDocument = (appointment: AppointmentRecord | null, mode: "soap" | "summary") => {
+    if (!appointment) {
       return;
     }
-    const copilot = selectedWorkspaceAppointment.doctor_copilot;
+    const copilot = appointment.doctor_copilot;
     if (mode === "soap") {
-      openPrintableWindow(`SOAP Note · ${selectedWorkspaceAppointment.patient_name || "Patient"}`, [
-        { label: "Patient", value: `${selectedWorkspaceAppointment.patient_name || "Patient"}\n${selectedWorkspaceAppointment.patient_email || ""}`.trim() },
-        { label: "Visit reason", value: selectedWorkspaceAppointment.reason || "" },
-        { label: "SOAP Note", value: copilot?.soap_note?.formatted || selectedWorkspaceAppointment.consultation_notes || "" },
-        { label: "Follow-up plan", value: selectedWorkspaceAppointment.follow_up_plan || copilot?.suggested_follow_up_plan?.join("\n") || "" },
+      openPrintableWindow(`SOAP Note · ${appointment.patient_name || "Patient"}`, [
+        { label: "Patient", value: `${appointment.patient_name || "Patient"}\n${appointment.patient_email || ""}`.trim() },
+        { label: "Visit reason", value: appointment.reason || "" },
+        { label: "SOAP Note", value: copilot?.soap_note?.formatted || appointment.consultation_notes || "" },
+        { label: "Follow-up plan", value: appointment.follow_up_plan || copilot?.suggested_follow_up_plan?.join("\n") || "" },
       ]);
       return;
     }
 
-    openPrintableWindow(`Consultation Summary · ${selectedWorkspaceAppointment.patient_name || "Patient"}`, [
-      { label: "Patient", value: `${selectedWorkspaceAppointment.patient_name || "Patient"}\n${selectedWorkspaceAppointment.patient_email || ""}`.trim() },
-      { label: "Scheduled slot", value: `${selectedWorkspaceAppointment.appointment_date || ""} ${selectedWorkspaceAppointment.appointment_time || ""}\n${selectedWorkspaceAppointment.appointment_location || ""}`.trim() },
-      { label: "Diagnosis summary", value: selectedWorkspaceAppointment.diagnosis_summary || copilot?.suggested_diagnosis_buckets?.join("\n") || "" },
-      { label: "Medication / prescription", value: selectedWorkspaceAppointment.prescription_summary || copilot?.medication_safety_reminders?.join("\n") || "" },
-      { label: "Follow-up plan", value: selectedWorkspaceAppointment.follow_up_plan || copilot?.suggested_follow_up_plan?.join("\n") || "" },
+    openPrintableWindow(`Consultation Summary · ${appointment.patient_name || "Patient"}`, [
+      { label: "Patient", value: `${appointment.patient_name || "Patient"}\n${appointment.patient_email || ""}`.trim() },
+      { label: "Scheduled slot", value: `${appointment.appointment_date || ""} ${appointment.appointment_time || ""}\n${appointment.appointment_location || ""}`.trim() },
+      { label: "Diagnosis summary", value: appointment.diagnosis_summary || copilot?.suggested_diagnosis_buckets?.join("\n") || "" },
+      { label: "Medication / prescription", value: appointment.prescription_summary || copilot?.medication_safety_reminders?.join("\n") || "" },
+      { label: "Follow-up plan", value: appointment.follow_up_plan || copilot?.suggested_follow_up_plan?.join("\n") || "" },
     ]);
   };
 
@@ -833,7 +781,7 @@ export default function DoctorDashboard() {
         <motion.div variants={fadeUp} custom={0} className="dashboard-hero rounded-[2rem] px-6 py-6 sm:px-7">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <div className="inline-flex items-center gap-2 rounded-full border border-white/80 bg-white/70 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.22em] text-muted-foreground shadow-sm">
+              <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background/70 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.22em] text-muted-foreground shadow-sm backdrop-blur-xl">
                 <Stethoscope className="h-3.5 w-3.5 text-primary" />
                 Clinician Workspace
               </div>
@@ -843,7 +791,7 @@ export default function DoctorDashboard() {
               <p className="mt-2 max-w-2xl text-sm leading-7 text-muted-foreground">
                 A focused view of assigned patients, appointments, and urgent follow-up for Dr. {user?.name}.
               </p>
-              <p className="mt-3 max-w-2xl rounded-2xl border border-white/80 bg-white/65 px-4 py-3 text-sm text-foreground shadow-sm">
+              <p className="mt-3 max-w-2xl rounded-2xl border border-border/60 bg-background/65 px-4 py-3 text-sm text-foreground shadow-sm backdrop-blur-xl">
                 {doctorOperationalBrief}
               </p>
             </div>
@@ -875,601 +823,63 @@ export default function DoctorDashboard() {
 
         <motion.div variants={fadeUp} custom={1} className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {[
-            { label: "Assigned Patients", value: stats?.totalPatients ?? 0, icon: Users },
-            { label: "Open Alerts", value: stats?.openAlerts ?? alerts.filter((entry) => entry.status === "open").length, icon: BellRing },
-            { label: "Open Emergencies", value: stats?.openEmergencies ?? 0, icon: AlertTriangle },
-            { label: "Appointment Requests", value: stats?.appointmentRequests ?? 0, icon: CalendarClock },
+            { label: "Assigned Patients", value: stats?.totalPatients ?? 0, icon: Users, route: "/doctor/patients" },
+            { label: "Open Alerts", value: stats?.openAlerts ?? alerts.filter((entry) => entry.status === "open").length, icon: BellRing, section: "doctor-alerts" },
+            { label: "Open Emergencies", value: stats?.openEmergencies ?? 0, icon: AlertTriangle, section: "doctor-emergencies" },
+            { label: "Appointment Requests", value: stats?.appointmentRequests ?? 0, icon: CalendarClock, section: "doctor-appointments" },
           ].map((item) => (
-            <Card key={item.label} className="metric-card metric-card-hover border-white/70 bg-card/95 shadow-card">
-              <CardContent className="flex items-center gap-4 p-5">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent">
-                  <item.icon className="h-5 w-5 text-primary" />
-                </div>
-                <div>
-                  <p className="font-display text-2xl font-bold text-foreground">{item.value}</p>
-                  <p className="text-sm text-muted-foreground">{item.label}</p>
-                </div>
-              </CardContent>
-            </Card>
+            <button
+              key={item.label}
+              type="button"
+              onClick={() => (item.route ? navigate(item.route) : jumpToSection(item.section as string))}
+              className="text-left"
+            >
+              <Card className="metric-card metric-card-hover border-border/60 bg-card/95 shadow-card">
+                <CardContent className="flex items-center gap-4 p-5">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent">
+                    <item.icon className="h-5 w-5 text-primary" />
+                  </div>
+                  <div>
+                    <p className="font-display text-2xl font-bold text-foreground">{item.value}</p>
+                    <p className="text-sm text-muted-foreground">{item.label}</p>
+                  </div>
+                </CardContent>
+              </Card>
+            </button>
           ))}
         </motion.div>
 
-        <motion.div variants={fadeUp} custom={2} className="space-y-4">
-          <div className="grid gap-4 lg:grid-cols-3">
-            <Card className="premium-section shadow-card">
-              <CardContent className="space-y-3 p-5">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.22em] text-muted-foreground">Needs attention now</p>
-                    <p className="mt-2 font-display text-3xl font-semibold text-foreground">
-                      {(reviewQueueSummary?.immediate ?? 0) + (alerts.filter((entry) => entry.status === "open").length)}
-                    </p>
-                  </div>
-                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent">
-                    <AlertTriangle className="h-5 w-5 text-primary" />
-                  </div>
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  {reviewQueueSummary?.immediate ?? 0} patient review{(reviewQueueSummary?.immediate ?? 0) === 1 ? "" : "s"} and {alerts.filter((entry) => entry.status === "open").length} live alert{alerts.filter((entry) => entry.status === "open").length === 1 ? "" : "s"} are currently waiting.
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card className="premium-section shadow-card">
-              <CardContent className="space-y-3 p-5">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.22em] text-muted-foreground">Visit queue</p>
-                    <p className="mt-2 font-display text-3xl font-semibold text-foreground">{appointments.length}</p>
-                  </div>
-                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent">
-                    <ClipboardList className="h-5 w-5 text-primary" />
-                  </div>
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  {stats?.appointmentRequests ?? 0} booking request{(stats?.appointmentRequests ?? 0) === 1 ? "" : "s"} and {prioritySchedulingPatients.length} patient{prioritySchedulingPatients.length === 1 ? "" : "s"} need scheduling attention.
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card className="premium-section shadow-card">
-              <CardContent className="space-y-3 p-5">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.22em] text-muted-foreground">Follow-up workload</p>
-                    <p className="mt-2 font-display text-3xl font-semibold text-foreground">{careCoordinatorQueue.length}</p>
-                  </div>
-                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent">
-                    <BellRing className="h-5 w-5 text-primary" />
-                  </div>
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  {urgentCoordinatorTasks} urgent outreach task{urgentCoordinatorTasks === 1 ? "" : "s"} and {followupDropoutWatchlist.length} follow-up risk case{followupDropoutWatchlist.length === 1 ? "" : "s"} need a response path.
-                </p>
-              </CardContent>
-            </Card>
-          </div>
-
-          <Accordion type="multiple" className="rounded-[1.75rem] border border-white/70 bg-card/80 px-5 shadow-card backdrop-blur">
-            <AccordionItem value="clinical">
-              <AccordionTrigger className="text-sm font-medium text-foreground">Clinical review details</AccordionTrigger>
-              <AccordionContent className="pb-4">
-                <div className="grid gap-6 xl:grid-cols-4">
-          <Card className="premium-section shadow-card">
+        <motion.div variants={fadeUp} custom={2}>
+          <Card id="doctor-emergencies" className="premium-section shadow-card">
             <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="font-display text-lg">Priority Review Queue</CardTitle>
-              <Badge variant="outline">Review timing</Badge>
-            </CardHeader>
-            <CardContent className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              {[
-                { label: "Immediate", value: reviewQueueSummary?.immediate ?? 0 },
-                { label: "6 Hours", value: reviewQueueSummary?.within_6_hours ?? 0 },
-                { label: "24 Hours", value: reviewQueueSummary?.within_24_hours ?? 0 },
-                { label: "Routine", value: reviewQueueSummary?.routine ?? 0 },
-              ].map((item) => (
-                <div key={item.label} className="rounded-2xl bg-muted/50 p-4">
-                  <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{item.label}</p>
-                  <div className="mt-2 flex items-center gap-3">
-                    <Stethoscope className="h-4 w-4 text-primary" />
-                    <p className="font-display text-2xl font-bold text-foreground">{item.value}</p>
-                  </div>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-
-          <Card className="premium-section shadow-card">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="font-display text-lg">Trend Signals</CardTitle>
-              <Badge variant={outbreakClusters.length > 0 ? "secondary" : "outline"}>{outbreakClusters.length} signals</Badge>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {outbreakClusters.length === 0 && (
-                <p className="text-sm text-muted-foreground">No unusual assigned-patient symptom cluster is above baseline right now.</p>
-              )}
-              {outbreakClusters.slice(0, 3).map((cluster) => (
-                <div key={cluster.cluster} className="rounded-2xl border border-border/60 p-4">
-                  <div className="mb-2 flex items-center justify-between gap-3">
-                    <div>
-                      <p className="font-medium text-foreground">{cluster.cluster}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {cluster.top_symptoms?.length ? cluster.top_symptoms.join(", ") : "Cluster activity detected"}
-                      </p>
-                    </div>
-                    <Badge variant={cluster.severity === "high" ? "destructive" : "secondary"}>{cluster.severity}</Badge>
-                  </div>
-                  <p className="text-sm text-foreground">{cluster.summary}</p>
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    Recent: {cluster.recent_count} · Baseline/day: {cluster.baseline_daily_avg} · Score: {cluster.anomaly_score}
-                  </p>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-
-          <Card className="premium-section shadow-card">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="font-display text-lg">Safety Review</CardTitle>
-              <Badge variant={clinicalSafetyWatch.length > 0 ? "secondary" : "outline"}>{clinicalSafetyWatch.length} patients</Badge>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="grid gap-3 sm:grid-cols-2">
-                {[
-                  { label: "Critical", value: clinicalSafetySummary?.critical ?? 0 },
-                  { label: "High", value: clinicalSafetySummary?.high ?? 0 },
-                  { label: "Medium", value: clinicalSafetySummary?.medium ?? 0 },
-                  { label: "Low", value: clinicalSafetySummary?.low ?? 0 },
-                ].map((item) => (
-                  <div key={item.label} className="rounded-2xl bg-muted/50 p-3">
-                    <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{item.label}</p>
-                    <div className="mt-2 flex items-center gap-3">
-                      <ShieldAlert className="h-4 w-4 text-primary" />
-                      <p className="font-display text-2xl font-bold text-foreground">{item.value}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              {clinicalSafetyWatch.length === 0 && (
-                <p className="text-sm text-muted-foreground">No high-priority clinical safety conflicts are active in your assigned queue.</p>
-              )}
-              {clinicalSafetyWatch.slice(0, 2).map((entry) => (
-                <div key={`safety-${entry.id || entry.email}`} className="rounded-2xl border border-border/60 p-4">
-                  <div className="mb-2 flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-medium text-foreground">{entry.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {entry.assigned_doctor_name || "Assigned doctor"} {entry.email ? `· ${entry.email}` : ""}
-                      </p>
-                    </div>
-                    <Badge variant={getSafetyBadgeVariant(entry.clinical_alert_level)}>{entry.clinical_alert_level}</Badge>
-                  </div>
-                  <p className="text-sm text-foreground">{entry.safety_recommendation}</p>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-
-          <Card className="premium-section shadow-card">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="font-display text-lg">Urgency Watch</CardTitle>
-              <Badge variant={earlyWarningWatchlist.length > 0 ? "secondary" : "outline"}>{earlyWarningWatchlist.length} patients</Badge>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="grid gap-3 sm:grid-cols-2">
-                {[
-                  { label: "Critical", value: earlyWarningSummary?.critical ?? 0 },
-                  { label: "High", value: earlyWarningSummary?.high ?? 0 },
-                  { label: "Medium", value: earlyWarningSummary?.medium ?? 0 },
-                  { label: "Low", value: earlyWarningSummary?.low ?? 0 },
-                ].map((item) => (
-                  <div key={item.label} className="rounded-2xl bg-muted/50 p-4">
-                    <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{item.label}</p>
-                    <div className="mt-2 flex items-center gap-3">
-                      <HeartPulse className="h-4 w-4 text-primary" />
-                      <p className="font-display text-2xl font-bold text-foreground">{item.value}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              {earlyWarningWatchlist.length === 0 && (
-                <p className="text-sm text-muted-foreground">No assigned patient currently has an elevated early-warning score.</p>
-              )}
-              {earlyWarningWatchlist.slice(0, 2).map((entry) => (
-                <div key={`doctor-ew-${entry.id || entry.email}`} className="rounded-2xl border border-border/60 p-4">
-                  <div className="mb-2 flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-medium text-foreground">{entry.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {entry.assigned_doctor_name || "Assigned patient"} {entry.email ? `· ${entry.email}` : ""}
-                      </p>
-                    </div>
-                    <Badge variant={getRiskBadgeVariant(entry.early_warning_priority)}>
-                      {entry.early_warning_priority} · {entry.early_warning_score}/12
-                    </Badge>
-                  </div>
-                  <p className="text-sm text-foreground">{entry.early_warning_summary}</p>
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    {entry.early_warning_response} · {entry.early_warning_monitoring_window}
-                  </p>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-
-                </div>
-              </AccordionContent>
-            </AccordionItem>
-
-            <AccordionItem value="followup">
-              <AccordionTrigger className="text-sm font-medium text-foreground">Follow-up and outreach details</AccordionTrigger>
-              <AccordionContent className="pb-4">
-                <div className="grid gap-6 xl:grid-cols-3">
-          <Card className="premium-section shadow-card">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="font-display text-lg">Return Risk Watch</CardTitle>
-              <Badge variant={readmissionWatchlist.length > 0 ? "secondary" : "outline"}>{readmissionWatchlist.length} patients</Badge>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="grid gap-3 sm:grid-cols-2">
-                {[
-                  { label: "Critical", value: readmissionRiskSummary?.critical ?? 0 },
-                  { label: "High", value: readmissionRiskSummary?.high ?? 0 },
-                  { label: "Medium", value: readmissionRiskSummary?.medium ?? 0 },
-                  { label: "Low", value: readmissionRiskSummary?.low ?? 0 },
-                ].map((item) => (
-                  <div key={item.label} className="rounded-2xl bg-muted/50 p-4">
-                    <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{item.label}</p>
-                    <div className="mt-2 flex items-center gap-3">
-                      <AlertTriangle className="h-4 w-4 text-primary" />
-                      <p className="font-display text-2xl font-bold text-foreground">{item.value}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              {readmissionWatchlist.length === 0 && (
-                <p className="text-sm text-muted-foreground">No assigned patient currently has elevated relapse or return-risk.</p>
-              )}
-              {readmissionWatchlist.slice(0, 2).map((entry) => (
-                <div key={`doctor-readmission-${entry.id || entry.email}`} className="rounded-2xl border border-border/60 p-4">
-                  <div className="mb-2 flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-medium text-foreground">{entry.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {entry.assigned_doctor_name || "Assigned patient"} {entry.email ? `· ${entry.email}` : ""}
-                      </p>
-                    </div>
-                    <Badge variant={getRiskBadgeVariant(entry.readmission_risk_label)}>
-                      {entry.readmission_risk_label} · {entry.readmission_risk_score}/100
-                    </Badge>
-                  </div>
-                  <p className="text-sm text-foreground">{entry.readmission_risk_summary}</p>
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    Review window: {entry.relapse_risk_window}
-                  </p>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-
-          <Card className="premium-section shadow-card">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="font-display text-lg">Follow-up Reliability</CardTitle>
-              <Badge variant={followupDropoutWatchlist.length > 0 ? "secondary" : "outline"}>{followupDropoutWatchlist.length} patients</Badge>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="grid gap-3 sm:grid-cols-2">
-                {[
-                  { label: "Critical", value: followupDropoutSummary?.critical ?? 0 },
-                  { label: "High", value: followupDropoutSummary?.high ?? 0 },
-                  { label: "Medium", value: followupDropoutSummary?.medium ?? 0 },
-                  { label: "Low", value: followupDropoutSummary?.low ?? 0 },
-                ].map((item) => (
-                  <div key={item.label} className="rounded-2xl bg-muted/50 p-4">
-                    <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{item.label}</p>
-                    <div className="mt-2 flex items-center gap-3">
-                      <CalendarClock className="h-4 w-4 text-primary" />
-                      <p className="font-display text-2xl font-bold text-foreground">{item.value}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              {followupDropoutWatchlist.length === 0 && (
-                <p className="text-sm text-muted-foreground">No assigned patient currently shows elevated follow-up dropout risk.</p>
-              )}
-              {followupDropoutWatchlist.slice(0, 2).map((entry) => (
-                <div key={`doctor-followup-${entry.id || entry.email}`} className="rounded-2xl border border-border/60 p-4">
-                  <div className="mb-2 flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-medium text-foreground">{entry.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {entry.assigned_doctor_name || "Assigned patient"} {entry.email ? `· ${entry.email}` : ""}
-                      </p>
-                    </div>
-                    <Badge variant={getRiskBadgeVariant(entry.followup_dropout_risk_label)}>
-                      {entry.followup_dropout_risk_label} · {entry.followup_dropout_risk_score}/100
-                    </Badge>
-                  </div>
-                  <p className="text-sm text-foreground">{entry.followup_dropout_risk_summary}</p>
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    Outreach: {entry.followup_outreach_window}
-                  </p>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-
-          <Card className="premium-section shadow-card">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="font-display text-lg">Outreach Queue</CardTitle>
-              <Badge variant={careCoordinatorQueue.length > 0 ? "secondary" : "outline"}>{careCoordinatorQueue.length} tasks</Badge>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <p className="text-sm text-muted-foreground">
-                Use this queue to close the loop on patients who need outreach, rebooking, or a manual response from the care team.
-              </p>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {[
-                  { label: "Critical", value: careCoordinatorSummary?.critical ?? 0 },
-                  { label: "High", value: careCoordinatorSummary?.high ?? 0 },
-                  { label: "Medium", value: careCoordinatorSummary?.medium ?? 0 },
-                  { label: "Low", value: careCoordinatorSummary?.low ?? 0 },
-                ].map((item) => (
-                  <div key={item.label} className="rounded-2xl bg-muted/50 p-4">
-                    <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{item.label}</p>
-                    <div className="mt-2 flex items-center gap-3">
-                      <BellRing className="h-4 w-4 text-primary" />
-                      <p className="font-display text-2xl font-bold text-foreground">{item.value}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              {careCoordinatorQueue.length === 0 && (
-                <p className="text-sm text-muted-foreground">No outreach tasks are waiting right now. New follow-up, return-risk, or safety cases will appear here automatically.</p>
-              )}
-              {careCoordinatorQueue.slice(0, 3).map((task) => (
-                <div key={`coord-${task.patient_id || task.patient_email}-${task.task_type}`} className="rounded-2xl border border-border/60 p-4">
-                  <div className="mb-2 flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-medium text-foreground">{task.patient_name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {task.assigned_doctor_name || "Assigned patient"} {task.patient_email ? `· ${task.patient_email}` : ""}
-                      </p>
-                    </div>
-                    <Badge variant={getRiskBadgeVariant(task.priority)}>
-                      {task.priority} · {task.score}/100
-                    </Badge>
-                  </div>
-                  <p className="text-sm text-foreground">{task.summary}</p>
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    Action: {formatLabel(task.task_type)} · {task.outreach_window}
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">{task.suggested_action}</p>
-                  {task.patient_id && (
-                    <>
-                      <Textarea
-                        className="mt-3"
-                        value={careCoordinatorNotes[task.patient_id] ?? task.workflow?.note ?? ""}
-                        onChange={(event) =>
-                          setCareCoordinatorNotes((current) => ({
-                            ...current,
-                            [task.patient_id as string]: event.target.value,
-                          }))
-                        }
-                        placeholder="Add outreach note, patient response, or escalation reason."
-                        rows={2}
-                      />
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() =>
-                            sendCareOutreachMutation.mutate({
-                              patientId: task.patient_id as string,
-                              channel: "email",
-                              note: careCoordinatorNotes[task.patient_id as string] ?? task.workflow?.note ?? "",
-                            })
-                          }
-                        >
-                          Email
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() =>
-                            sendCareOutreachMutation.mutate({
-                              patientId: task.patient_id as string,
-                              channel: "whatsapp",
-                              note: careCoordinatorNotes[task.patient_id as string] ?? task.workflow?.note ?? "",
-                            })
-                          }
-                        >
-                          WhatsApp
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() =>
-                            sendCareOutreachMutation.mutate({
-                              patientId: task.patient_id as string,
-                              channel: "phone",
-                              note: careCoordinatorNotes[task.patient_id as string] ?? task.workflow?.note ?? "",
-                            })
-                          }
-                        >
-                          Log Call
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() =>
-                            updateCareCoordinatorMutation.mutate({
-                              patientId: task.patient_id as string,
-                              status: "contacted",
-                              note: careCoordinatorNotes[task.patient_id as string] ?? task.workflow?.note ?? "",
-                            })
-                          }
-                        >
-                          Contacted
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() =>
-                            updateCareCoordinatorMutation.mutate({
-                              patientId: task.patient_id as string,
-                              status: "no_response",
-                              note: careCoordinatorNotes[task.patient_id as string] ?? task.workflow?.note ?? "",
-                            })
-                          }
-                        >
-                          No Response
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() =>
-                            updateCareCoordinatorMutation.mutate({
-                              patientId: task.patient_id as string,
-                              status: "rescheduled",
-                              note: careCoordinatorNotes[task.patient_id as string] ?? task.workflow?.note ?? "",
-                            })
-                          }
-                        >
-                          Rescheduled
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() =>
-                            updateCareCoordinatorMutation.mutate({
-                              patientId: task.patient_id as string,
-                              status: "escalated",
-                              note: careCoordinatorNotes[task.patient_id as string] ?? task.workflow?.note ?? "",
-                            })
-                          }
-                        >
-                          Escalate
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() =>
-                            updateCareCoordinatorMutation.mutate({
-                              patientId: task.patient_id as string,
-                              status: "resolved",
-                              note: careCoordinatorNotes[task.patient_id as string] ?? task.workflow?.note ?? "",
-                            })
-                          }
-                        >
-                          Resolve
-                        </Button>
-                      </div>
-                      {task.workflow && (
-                        <div className="mt-3 space-y-2">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <Badge variant="outline">{formatLabel(task.workflow.status)}</Badge>
-                            <span className="text-[11px] text-muted-foreground">
-                              {task.workflow.updated_at ? formatDate(task.workflow.updated_at) : "No update yet"}
-                            </span>
-                          </div>
-                          {(task.workflow.history || []).slice(0, 2).map((entry, index) => (
-                            <div key={`${task.patient_id}-coord-history-${index}`} className="rounded-lg border border-border/60 px-3 py-2">
-                              <div className="flex flex-wrap items-center justify-between gap-2">
-                                <Badge variant="outline">{formatLabel(entry.status)}</Badge>
-                                <span className="text-[11px] text-muted-foreground">{formatDate(entry.created_at)}</span>
-                              </div>
-                              <p className="mt-2 text-sm text-foreground">{entry.note || "No note added."}</p>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      {(task.outreach_history || []).length > 0 && (
-                        <div className="mt-3 space-y-2">
-                          {(task.outreach_history || []).slice(0, 2).map((entry, index) => (
-                            <div key={`${task.patient_id}-outreach-${index}`} className="rounded-lg border border-border/60 px-3 py-2">
-                              <div className="flex flex-wrap items-center justify-between gap-2">
-                                <Badge variant="outline">{formatLabel(entry.channel)}</Badge>
-                                <span className="text-[11px] text-muted-foreground">{formatDate(entry.created_at)}</span>
-                              </div>
-                              <p className="mt-2 text-sm text-foreground">
-                                {entry.status} {entry.target ? `· ${entry.target}` : ""}
-                              </p>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-                </div>
-              </AccordionContent>
-            </AccordionItem>
-          </Accordion>
-        </motion.div>
-
-        <motion.div variants={fadeUp} custom={3} className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
-          <Card className="premium-section shadow-card">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle className="font-display text-lg">Clinic Slot Manager</CardTitle>
-                <p className="mt-1 text-sm text-muted-foreground">Publish real appointment openings so patients book into actual consultation capacity.</p>
-              </div>
-              <Badge variant="outline">{doctorSlots.length} live slots</Badge>
+              <CardTitle className="font-display text-lg">Emergency Queue</CardTitle>
+              <Badge variant={emergencies.length > 0 ? "destructive" : "outline"}>{emergencies.length} total</Badge>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid gap-3 md:grid-cols-2">
-                <Input type="date" value={slotDraft.date} onChange={(event) => setSlotDraft((current) => ({ ...current, date: event.target.value }))} />
-                <select
-                  className="h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground"
-                  value={slotDraft.time}
-                  onChange={(event) => setSlotDraft((current) => ({ ...current, time: event.target.value }))}
-                >
-                  {["09:00 AM", "09:30 AM", "10:00 AM", "10:30 AM", "11:00 AM", "11:30 AM", "02:00 PM", "02:30 PM", "03:00 PM", "03:30 PM", "04:00 PM", "04:30 PM"].map((slotTime) => (
-                    <option key={slotTime} value={slotTime}>
-                      {slotTime}
-                    </option>
-                  ))}
-                </select>
-                <Input value={slotDraft.label} onChange={(event) => setSlotDraft((current) => ({ ...current, label: event.target.value }))} placeholder="Consultation type" />
-                <Input value={slotDraft.location} onChange={(event) => setSlotDraft((current) => ({ ...current, location: event.target.value }))} placeholder="Room / clinic location" />
-              </div>
-              <div className="flex items-center justify-between gap-3 rounded-2xl border border-border/60 bg-muted/30 px-4 py-3">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Capacity per slot</p>
-                  <Input className="mt-2 w-24" value={slotDraft.capacity} onChange={(event) => setSlotDraft((current) => ({ ...current, capacity: event.target.value }))} />
-                </div>
-                <Button variant="outline" onClick={addDoctorSlot} disabled={updateDoctorSlotsMutation.isPending}>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Publish slot
-                </Button>
-              </div>
-              <div className="space-y-3">
-                {doctorSlots.length === 0 && (
-                  <p className="text-sm text-muted-foreground">No live slots yet. Publish your next clinic openings here and patients will see them on the booking page.</p>
-                )}
-                {doctorSlots.slice(0, 8).map((slot) => (
-                  <div key={slot.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border/60 px-4 py-3">
+              {emergencies.length === 0 && (
+                <p className="text-sm text-muted-foreground">No emergency escalations are assigned to you right now.</p>
+              )}
+              {emergencies.slice(0, 4).map((entry) => (
+                <div key={entry.id} className="rounded-2xl border border-border/60 p-4">
+                  <div className="mb-2 flex items-center justify-between gap-3">
                     <div>
-                      <p className="font-medium text-foreground">{slot.date} · {slot.time}</p>
-                      <p className="text-sm text-muted-foreground">{slot.label || "Consultation slot"} {slot.location ? `· ${slot.location}` : ""}</p>
+                      <p className="font-medium text-foreground">{entry.patient_name}</p>
+                      <p className="text-xs text-muted-foreground">{entry.email || "No email attached"}</p>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <Badge variant={slot.is_available ? "secondary" : "outline"}>
-                        {(slot.booked_count ?? 0)}/{slot.capacity ?? 1} booked
-                      </Badge>
-                      <Button size="sm" variant="outline" onClick={() => removeDoctorSlot(slot.id)} disabled={updateDoctorSlotsMutation.isPending}>
-                        Remove
-                      </Button>
-                    </div>
+                    <Badge variant={entry.status === "open" ? "destructive" : "secondary"}>{entry.status}</Badge>
                   </div>
-                ))}
-              </div>
+                  <p className="text-sm text-foreground">{entry.message}</p>
+                  <div className="mt-3 flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                    <span>Severity: {entry.severity}</span>
+                    <span>{formatDate(entry.created_at)}</span>
+                  </div>
+                </div>
+              ))}
             </CardContent>
           </Card>
+        </motion.div>
 
+        <motion.div variants={fadeUp} custom={4}>
           <Card className="premium-section shadow-card">
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
@@ -1508,11 +918,19 @@ export default function DoctorDashboard() {
                   </div>
 
                   <div className="flex flex-wrap gap-2">
-                    <Button size="sm" variant="outline" onClick={() => exportWorkspaceDocument("soap")}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => exportAppointmentDocument(selectedWorkspaceAppointment, "soap")}
+                    >
                       <Download className="mr-2 h-4 w-4" />
                       Export SOAP
                     </Button>
-                    <Button size="sm" variant="outline" onClick={() => exportWorkspaceDocument("summary")}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => exportAppointmentDocument(selectedWorkspaceAppointment, "summary")}
+                    >
                       <FileText className="mr-2 h-4 w-4" />
                       Export summary
                     </Button>
@@ -1555,8 +973,8 @@ export default function DoctorDashboard() {
           </Card>
         </motion.div>
 
-        <motion.div variants={fadeUp} custom={4}>
-        <Card className="premium-section shadow-card">
+        <motion.div variants={fadeUp} custom={5}>
+        <Card id="doctor-appointments" className="premium-section shadow-card">
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle className="font-display text-lg">Doctor Appointment Queue</CardTitle>
             <Badge variant="outline">{appointments.length} bookings</Badge>
@@ -1644,6 +1062,22 @@ export default function DoctorDashboard() {
                               <Button size="sm" variant="outline" onClick={() => void copyCopilotSoap(appointment)}>
                                 <Copy className="h-3.5 w-3.5" />
                                 Copy SOAP
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => exportAppointmentDocument(appointment, "soap")}
+                              >
+                                <Download className="h-3.5 w-3.5" />
+                                Export SOAP
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => exportAppointmentDocument(appointment, "summary")}
+                              >
+                                <FileText className="h-3.5 w-3.5" />
+                                Export summary
                               </Button>
                             </div>
                           </div>
@@ -2006,201 +1440,7 @@ export default function DoctorDashboard() {
         </Card>
         </motion.div>
 
-        <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-          <Card className="border-border/60 bg-card/95 shadow-elevated">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="font-display text-lg">Assigned Patients</CardTitle>
-              <Badge variant="outline">{patients.length} patients</Badge>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Patient</TableHead>
-                    <TableHead>Symptoms</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Risk</TableHead>
-                    <TableHead>Triage</TableHead>
-                    <TableHead>Updated</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {patients.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={6} className="text-center text-muted-foreground">
-                        No patients are assigned yet.
-                      </TableCell>
-                    </TableRow>
-                  )}
-                  {patients.map((patient) => (
-                    <TableRow key={patient.id || patient.email}>
-                      <TableCell>
-                        <div>
-                          <p className="font-medium text-foreground">{patient.name}</p>
-                          <p className="text-xs text-muted-foreground">{patient.email || "No email on file"}</p>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div>
-                          <p className="text-sm text-foreground">{compactList(patient.symptoms)}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {patient.duration_text || "No duration"} {patient.body_parts && patient.body_parts.length > 0 ? `· ${patient.body_parts.join(", ")}` : ""}
-                          </p>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="space-y-1">
-                          <Badge variant="outline">{patient.status}</Badge>
-                          <p className="text-xs text-muted-foreground">{patient.followup_priority || "Routine follow-up"}</p>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={getRiskBadgeVariant(patient.risk_level)}>{patient.risk_level}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div>
-                          <p className="font-medium text-foreground">{patient.triage_score ?? 0}/100</p>
-                          <p className="text-xs text-muted-foreground">
-                            {patient.recommended_action || patient.triage_reason || "No triage yet"}
-                            {patient.risk_trajectory ? ` · Trend: ${patient.risk_trajectory}` : ""}
-                          </p>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            Safety: {patient.clinical_alert_level || "Low"} · {patient.safety_recommendation || "Routine safety review"}
-                          </p>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            Previous visits: {patient.visit_history?.length || 0}
-                          </p>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            Scheduling: {patient.appointment_risk_label || "Pending"} {formatAppointmentRiskScore(patient.appointment_risk_score)}
-                          </p>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            Prediction: {patient.deterioration_prediction_label || "Low"} {patient.deterioration_prediction_score ?? 0}/100
-                          </p>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            Return risk: {patient.readmission_risk_label || "Low"} {patient.readmission_risk_score ?? 0}/100
-                          </p>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            Dropout risk: {patient.followup_dropout_risk_label || "Low"} {patient.followup_dropout_risk_score ?? 0}/100
-                          </p>
-                        </div>
-                      </TableCell>
-                      <TableCell>{formatDate(patient.updated_at)}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-
-          <div className="space-y-6">
-            <Card className="border-border/60 bg-card/95 shadow-card">
-              <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle className="font-display text-lg">Predicted Worsening Watchlist</CardTitle>
-                <Badge variant={predictionWatchlist.length > 0 ? "secondary" : "outline"}>{predictionWatchlist.length} patients</Badge>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {predictionWatchlist.length === 0 && (
-                  <p className="text-sm text-muted-foreground">
-                    Patients with the highest near-term deterioration risk will appear here.
-                  </p>
-                )}
-                {predictionWatchlist.slice(0, 4).map((patient) => (
-                  <div key={`watch-${patient.id || patient.email}`} className="rounded-2xl border border-border/60 p-4">
-                    <div className="mb-2 flex items-start justify-between gap-3">
-                      <div>
-                        <p className="font-medium text-foreground">{patient.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {patient.email || "No email on file"} {patient.triage_label ? `· Triage ${patient.triage_label}` : ""}
-                        </p>
-                      </div>
-                      <Badge variant={getRiskBadgeVariant(patient.deterioration_prediction_label)}>
-                        {patient.deterioration_prediction_label || "Low"}
-                      </Badge>
-                    </div>
-                    <p className="text-sm text-foreground">{patient.deterioration_prediction_reason || "No prediction summary yet."}</p>
-                    <div className="mt-3 flex items-center justify-between gap-3 text-xs text-muted-foreground">
-                      <span>
-                        Follow-up: {patient.predicted_followup_window || "Routine 72-hour review"} · Score {patient.deterioration_prediction_score ?? 0}/100
-                      </span>
-                      <span>{patient.worsening_flag ? "Worsening" : patient.risk_trajectory || "Stable"}</span>
-                    </div>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-
-            <Card className="border-border/60 bg-card/95 shadow-card">
-              <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle className="font-display text-lg">Priority Scheduling Queue</CardTitle>
-                <Badge variant={prioritySchedulingPatients.length > 0 ? "secondary" : "outline"}>
-                  {prioritySchedulingPatients.length} patients
-                </Badge>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {prioritySchedulingPatients.length === 0 && (
-                  <p className="text-sm text-muted-foreground">
-                    Patients who need quicker scheduling follow-up will appear here.
-                  </p>
-                )}
-                {prioritySchedulingPatients.map((patient) => (
-                  <div key={`schedule-${patient.id || patient.email}`} className="rounded-2xl border border-border/60 p-4">
-                    <div className="mb-2 flex items-start justify-between gap-3">
-                      <div>
-                        <p className="font-medium text-foreground">{patient.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {patient.status} {patient.assigned_doctor_name ? `· ${patient.assigned_doctor_name}` : ""}
-                        </p>
-                      </div>
-                      <Badge variant={getAppointmentRiskBadgeVariant(patient.appointment_risk_label)}>
-                        {patient.appointment_risk_label || "Low"}
-                      </Badge>
-                    </div>
-                    <p className="text-sm text-foreground">{patient.appointment_risk_reason || "No scheduling risk summary yet."}</p>
-                    <div className="mt-3 flex items-center justify-between gap-3 text-xs text-muted-foreground">
-                      <span>
-                        Priority: {patient.followup_priority || "Routine follow-up"} · Score {formatAppointmentRiskScore(patient.appointment_risk_score)}
-                      </span>
-                      <span>Due {formatDate(patient.followup_due_at)}</span>
-                    </div>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-
-            <Card className="border-border/60 bg-card/95 shadow-card">
-              <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle className="font-display text-lg">Previous Visit History</CardTitle>
-                <Badge variant="outline">{recentVisitEntries.length} records</Badge>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {recentVisitEntries.length === 0 && (
-                  <p className="text-sm text-muted-foreground">
-                    Completed consultation history will appear here and help you review returning patients faster.
-                  </p>
-                )}
-                {recentVisitEntries.map((visit) => (
-                  <div key={`${visit.patient_email}-${visit.appointment_id}`} className="rounded-2xl border border-border/60 p-4">
-                    <div className="mb-2 flex items-start justify-between gap-3">
-                      <div>
-                        <p className="font-medium text-foreground">{visit.patient_name || "Patient"}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {visit.visit_reason || visit.diagnosis_summary || "Consultation review"}
-                        </p>
-                      </div>
-                      <span className="text-xs text-muted-foreground">{formatDate(visit.completed_at)}</span>
-                    </div>
-                    <p className="text-sm text-foreground">
-                      {visit.follow_up_plan || visit.prescription_summary || visit.vitals_summary || visit.consultation_notes || "Visit details saved for care continuity."}
-                    </p>
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      {visit.doctor_name || user?.name || "Doctor"} {visit.doctor_specialty ? `· ${formatLabel(visit.doctor_specialty)}` : ""}
-                      {visit.doctor_code ? ` · ${visit.doctor_code}` : ""}
-                    </p>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-
+        <div className="grid gap-6 xl:grid-cols-2">
             <Card className="border-border/60 bg-card/95 shadow-card">
               <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle className="font-display text-lg">Vitals Monitoring</CardTitle>
@@ -2236,13 +1476,13 @@ export default function DoctorDashboard() {
             <Card className="border-border/60 bg-card/95 shadow-card">
               <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle className="font-display text-lg">Document Review Queue</CardTitle>
-                <Badge variant="outline">{documents.length} documents</Badge>
+                <Badge variant="outline">{doctorDocuments.length} documents</Badge>
               </CardHeader>
               <CardContent className="space-y-4">
-                {documents.length === 0 && (
+                {doctorDocuments.length === 0 && (
                   <p className="text-sm text-muted-foreground">Patient-uploaded documents assigned to you will appear here.</p>
                 )}
-                {documents.slice(0, 4).map((document: DocumentRecord) => (
+                {doctorDocuments.slice(0, 4).map((document: DocumentRecord) => (
                   <div key={document.id} className="rounded-2xl border border-border/60 p-4">
                     <div className="mb-2 flex items-start justify-between gap-3">
                       <div>
@@ -2333,56 +1573,7 @@ export default function DoctorDashboard() {
               </CardContent>
             </Card>
 
-            <Card className="border-border/60 bg-card/95 shadow-card">
-              <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle className="font-display text-lg">AI Summary Board</CardTitle>
-                <Badge variant="outline">{summaryPatients.length} patients</Badge>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {summaryPatients.length === 0 && (
-                  <p className="text-sm text-muted-foreground">Summaries will appear here as assigned patients chat or request care.</p>
-                )}
-                {summaryPatients.map((patient) => (
-                  <div key={`summary-${patient.id || patient.email}`} className="rounded-2xl border border-border/60 p-4">
-                    <div className="mb-2 flex items-start justify-between gap-3">
-                      <div>
-                        <p className="font-medium text-foreground">{patient.name}</p>
-                        <p className="text-xs text-muted-foreground">{patient.email || "No email on file"}</p>
-                      </div>
-                      <Badge variant={getRiskBadgeVariant(patient.risk_level)}>{patient.risk_level}</Badge>
-                    </div>
-                    <div className="space-y-2 text-sm">
-                      <p className="font-medium text-foreground">{patient.summary_headline || "AI summary ready"}</p>
-                      <p className="text-muted-foreground">{patient.soap_summary || patient.last_summary || "No patient summary yet."}</p>
-                      <div className="rounded-xl bg-muted/50 p-3">
-                        <div className="mb-2 flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-2 text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                            <FileText className="h-3.5 w-3.5" />
-                            Clinical note
-                          </div>
-                          <Button size="sm" variant="outline" onClick={() => void copyClinicalNote(patient)}>
-                            <Copy className="h-3.5 w-3.5" />
-                            Copy note
-                          </Button>
-                        </div>
-                        <p className="whitespace-pre-line text-sm text-foreground">
-                          {patient.clinical_note || patient.clinical_summary || "No clinical note generated yet."}
-                        </p>
-                        <p className="mt-2 text-xs text-muted-foreground">
-                          {patient.escalation_note || patient.recommended_action || "No escalation advice yet."}
-                          {patient.worsening_flag ? " Trend is worsening." : patient.risk_trajectory ? ` Trend: ${patient.risk_trajectory}.` : ""}
-                        </p>
-                        <p className="mt-2 text-xs text-muted-foreground">
-                          Predicted deterioration: {patient.deterioration_prediction_label || "Low"} ({patient.deterioration_prediction_score ?? 0}/100) · {patient.predicted_followup_window || "Routine 72-hour review"}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-
-            <Card className="border-border/60 bg-card/95 shadow-card">
+            <Card id="doctor-alerts" className="border-border/60 bg-card/95 shadow-card">
               <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle className="font-display text-lg">Assigned Alerts</CardTitle>
                 <Badge variant={alerts.length > 0 ? "destructive" : "outline"}>{alerts.length} total</Badge>
@@ -2431,58 +1622,50 @@ export default function DoctorDashboard() {
                 ))}
               </CardContent>
             </Card>
-
-            <Card className="border-border/60 bg-card/95 shadow-card">
-              <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle className="font-display text-lg">Emergency Queue</CardTitle>
-                <Badge variant={emergencies.length > 0 ? "destructive" : "outline"}>{emergencies.length} total</Badge>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {emergencies.length === 0 && (
-                  <p className="text-sm text-muted-foreground">No emergency escalations are assigned to you right now.</p>
-                )}
-                {emergencies.slice(0, 5).map((entry) => (
-                  <div key={entry.id} className="rounded-2xl border border-border/60 p-4">
-                    <div className="mb-2 flex items-center justify-between gap-3">
-                      <div>
-                        <p className="font-medium text-foreground">{entry.patient_name}</p>
-                        <p className="text-xs text-muted-foreground">{entry.email || "No email attached"}</p>
-                      </div>
-                      <Badge variant={entry.status === "open" ? "destructive" : "secondary"}>{entry.status}</Badge>
-                    </div>
-                    <p className="text-sm text-foreground">{entry.message}</p>
-                    <div className="mt-3 flex items-center justify-between gap-3 text-xs text-muted-foreground">
-                      <span>Severity: {entry.severity}</span>
-                      <span>{formatDate(entry.created_at)}</span>
-                    </div>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-
-            <Card className="border-border/60 bg-card/95 shadow-card">
-              <CardHeader>
-                <CardTitle className="font-display text-lg">Care Snapshot</CardTitle>
-              </CardHeader>
-              <CardContent className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
-                {[
-                  { label: "Active Chats", value: stats?.activeChats ?? 0 },
-                  { label: "Tracked Emergencies", value: stats?.totalEmergencies ?? 0 },
-                  { label: "Open Alerts", value: stats?.openAlerts ?? 0 },
-                  { label: "Clinical Queue", value: patients.length + alerts.length },
-                ].map((item) => (
-                  <div key={item.label} className="rounded-2xl bg-muted/50 p-4">
-                    <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{item.label}</p>
-                    <div className="mt-2 flex items-center gap-3">
-                      <Stethoscope className="h-4 w-4 text-primary" />
-                      <p className="font-display text-2xl font-bold text-foreground">{item.value}</p>
-                    </div>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          </div>
         </div>
+
+        <Card className="border-border/60 bg-card/95 shadow-card">
+          <CardHeader className="flex flex-row items-center justify-between gap-3">
+            <CardTitle className="font-display text-lg">Previous Visit History</CardTitle>
+            <Badge variant="outline">{recentVisitEntries.length} records</Badge>
+          </CardHeader>
+          <CardContent>
+            <Accordion type="single" collapsible className="w-full">
+              <AccordionItem value="previous-visits" className="border-border/60">
+                <AccordionTrigger className="py-2 text-left text-sm font-medium text-foreground hover:no-underline">
+                  View completed consultation history
+                </AccordionTrigger>
+                <AccordionContent className="space-y-4 pt-3">
+                  {recentVisitEntries.length === 0 && (
+                    <p className="text-sm text-muted-foreground">
+                      Completed consultation history will appear here and help you review returning patients faster.
+                    </p>
+                  )}
+                  {recentVisitEntries.map((visit) => (
+                    <div key={`${visit.patient_email}-${visit.appointment_id}`} className="rounded-2xl border border-border/60 p-4">
+                      <div className="mb-2 flex items-start justify-between gap-3">
+                        <div>
+                          <p className="font-medium text-foreground">{visit.patient_name || "Patient"}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {visit.visit_reason || visit.diagnosis_summary || "Consultation review"}
+                          </p>
+                        </div>
+                        <span className="text-xs text-muted-foreground">{formatDate(visit.completed_at)}</span>
+                      </div>
+                      <p className="text-sm text-foreground">
+                        {visit.follow_up_plan || visit.prescription_summary || visit.vitals_summary || visit.consultation_notes || "Visit details saved for care continuity."}
+                      </p>
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        {visit.doctor_name || user?.name || "Doctor"} {visit.doctor_specialty ? `· ${formatLabel(visit.doctor_specialty)}` : ""}
+                        {visit.doctor_code ? ` · ${visit.doctor_code}` : ""}
+                      </p>
+                    </div>
+                  ))}
+                </AccordionContent>
+              </AccordionItem>
+            </Accordion>
+          </CardContent>
+        </Card>
       </motion.div>
     </DashboardLayout>
   );

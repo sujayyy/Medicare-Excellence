@@ -7,6 +7,9 @@ export default defineConfig(() => ({
   server: {
     host: "::",
     port: 8080,
+    allowedHosts: [
+      "sasha-decidual-cagily.ngrok-free.dev",
+    ],
     hmr: {
       overlay: false,
     },

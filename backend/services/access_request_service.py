@@ -61,6 +61,8 @@ def submit_doctor_access_request(
             "hospital_id": hospital_id,
             "severity": "medium",
             "target_role": "hospital_admin",
+            "patient_name": name,
+            "patient_email": email.strip().lower(),
             "source": "access_request",
         }
     )
@@ -70,7 +72,17 @@ def submit_doctor_access_request(
 def get_doctor_access_requests(user: dict[str, Any]) -> list[dict[str, Any]]:
     if user.get("role") != "hospital_admin":
         raise ValidationError("Only hospital admins can review doctor access requests.")
-    return [_sanitize_request(item) for item in list_access_requests(hospital_id=user.get("hospital_id") or DEFAULT_HOSPITAL_ID)]
+
+    hospital_id = user.get("hospital_id") or DEFAULT_HOSPITAL_ID
+
+    # Backfill older pending requests that were stored under the legacy default hospital id
+    # before the admin's actual hospital id was used during doctor signup.
+    if hospital_id != DEFAULT_HOSPITAL_ID:
+        legacy_pending = list_access_requests(hospital_id=DEFAULT_HOSPITAL_ID, status="pending")
+        for request in legacy_pending:
+            update_access_request(request["id"], {"hospital_id": hospital_id})
+
+    return [_sanitize_request(item) for item in list_access_requests(hospital_id=hospital_id)]
 
 
 def approve_doctor_access_request(request_id: str, user: dict[str, Any]) -> dict[str, Any]:

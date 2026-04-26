@@ -15,6 +15,7 @@ import { Link, useLocation } from "react-router-dom";
 
 import { NavLink } from "@/components/NavLink";
 import SupportFab from "@/components/SupportFab";
+import ThemeToggle from "@/components/ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/context/AuthContext";
@@ -41,10 +42,13 @@ const patientNavItems = [
 
 const doctorNavItems = [
   { title: "Doctor Dashboard", url: "/doctor", icon: Shield },
+  { title: "Clinic Slot Manager", url: "/doctor/slots", icon: Calendar },
+  { title: "Assigned Patients", url: "/doctor/patients", icon: Users },
 ];
 
 const hospitalAdminNavItems = [
   { title: "Hospital Dashboard", url: "/admin", icon: Shield },
+  { title: "Doctor Workload", url: "/admin/doctors", icon: Users },
   { title: "Doctor Access", url: "/admin/access", icon: ClipboardCheck },
   { title: "Analytics", url: "/analytics", icon: BarChart3 },
 ];
@@ -107,6 +111,7 @@ function AppSidebarContent() {
   const collapsed = state === "collapsed";
   const navItems = getNavItems(role);
   const specialtyLabel = getSpecialtyLabel(user?.specialty);
+  const currentLocation = `${location.pathname}${location.hash || ""}`;
 
   return (
     <Sidebar collapsible="icon" className="border-r-0">
@@ -123,7 +128,7 @@ function AppSidebarContent() {
       </div>
       <SidebarContent>
         {!collapsed && (
-          <div className="mx-3 mt-4 rounded-2xl border border-sidebar-border/40 bg-sidebar-accent/60 p-4 shadow-[0_18px_36px_rgba(2,8,23,0.24)]">
+          <div className="mx-3 mt-4 rounded-2xl border border-sidebar-border/50 bg-sidebar-accent/70 p-4 shadow-card">
             <div className="flex items-center gap-3">
               <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-sidebar-primary/10">
                 <Building2 className="h-4 w-4 text-sidebar-primary" />
@@ -143,7 +148,7 @@ function AppSidebarContent() {
             <SidebarMenu>
               {navItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild isActive={location.pathname === item.url}>
+                  <SidebarMenuButton asChild isActive={currentLocation === item.url || location.pathname === item.url}>
                     <NavLink to={item.url} end activeClassName="bg-sidebar-accent text-sidebar-primary">
                       <item.icon className="mr-2 h-4 w-4" />
                       {!collapsed && <span>{item.title}</span>}
@@ -172,16 +177,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           initial={{ y: -18, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           transition={{ duration: 0.4 }}
-          className="beam-border sticky top-0 z-20 flex h-16 items-center gap-4 border-b border-white/45 bg-white/60 px-4 backdrop-blur-2xl sm:px-6"
+          className="beam-border sticky top-0 z-20 flex h-16 items-center gap-4 border-b border-border/60 bg-background/75 px-4 backdrop-blur-2xl sm:px-6"
         >
           <SidebarTrigger>
             <Menu className="h-5 w-5" />
           </SidebarTrigger>
-          <div className="hidden items-center gap-2 rounded-full border border-white/80 bg-white/70 px-3 py-1 text-xs text-muted-foreground shadow-sm md:inline-flex">
+          <div className="hidden items-center gap-2 rounded-full border border-border/60 bg-background/70 px-3 py-1 text-xs text-muted-foreground shadow-sm md:inline-flex">
             <span className="h-2 w-2 rounded-full bg-emerald-500" />
             Hospital systems online
           </div>
           <div className="flex-1" />
+          <ThemeToggle className="rounded-full border border-border/60 bg-background/70 backdrop-blur-xl hover:bg-background/90" />
           <Badge variant={role === "patient" ? "default" : "secondary"} className="hidden sm:inline-flex">
             {getRoleLabel(role)}
           </Badge>

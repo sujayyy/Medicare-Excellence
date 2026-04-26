@@ -49,6 +49,7 @@ const SUPPORT_TEMPLATE_BY_LANGUAGE: Record<string, string> = {
   "ml-IN": "Hello, I need healthcare help in Malayalam for symptoms, prescription understanding, or appointment support.",
   "bn-IN": "Hello, I need healthcare help in Bengali for symptoms, prescription understanding, or appointment support.",
 };
+const WHATSAPP_NUMBER = (import.meta.env.VITE_WHATSAPP_NUMBER || "").replace(/\D/g, "");
 
 function getLanguageOption(value: string) {
   return voiceLanguages.find((language) => language.value === value) || voiceLanguages[0];
@@ -182,14 +183,17 @@ function buildDocumentAssistantReply(document: DocumentRecord) {
       .join("\n");
     const modeNote =
       document.ocr_status === "ai_handwriting_interpreted"
-        ? "I reviewed the uploaded handwritten prescription image and extracted this medicine plan:"
-        : "I reviewed the uploaded prescription and extracted this medicine plan:";
+        ? "I reviewed the uploaded prescription image and extracted this medicine plan:"
+        : "I reviewed the uploaded prescription details and extracted this medicine plan:";
     const interpretationNote = document.ai_interpretation_notes ? `\n\nNote: ${document.ai_interpretation_notes}` : "";
     return `${modeNote}\n\n${medications}${interpretationNote}\n\nPlease confirm the drug name, dosage, and timing with your doctor or pharmacist before following it.`;
   }
 
   if (document.document_type === "prescription") {
-    return document.prescription_summary || "Prescription uploaded successfully. Add typed prescription notes for more accurate medicine extraction.";
+    return (
+      document.prescription_summary ||
+      "Prescription uploaded successfully. For better medicine extraction, add readable medicine names, dosage, and timing in the notes field."
+    );
   }
 
   return document.summary || "Your medical document has been uploaded and shared with the care team.";
@@ -401,6 +405,7 @@ export default function PatientDashboard() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
+  const documentUploadInputRef = useRef<HTMLInputElement>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
   const historyHydratedRef = useRef(false);
   const lastAutoSpokenMessageRef = useRef("");
@@ -431,6 +436,9 @@ export default function PatientDashboard() {
       if (!documentTitle.trim()) {
         throw new ApiError("Document title is required.", 400);
       }
+      if (!selectedFile && !documentNotes.trim()) {
+        throw new ApiError("Add a file or paste prescription/report notes before uploading.", 400);
+      }
 
       let contentText = "";
       if (selectedFile && selectedFile.type.startsWith("text/")) {
@@ -454,11 +462,17 @@ export default function PatientDashboard() {
       setDocumentType("lab_report");
       setDocumentNotes("");
       setSelectedFile(null);
+      if (documentUploadInputRef.current) {
+        documentUploadInputRef.current.value = "";
+      }
       setDocumentError("");
       await documentsQuery.refetch();
       toast({
         title: "Document uploaded",
-        description: "Your document is now available to the care team.",
+        description:
+          documentType === "prescription"
+            ? "Your prescription is saved. If handwriting is unclear, add typed medicine notes for better extraction."
+            : "Your document is now available to the care team.",
       });
     },
     onError: (error) => {
@@ -655,8 +669,10 @@ export default function PatientDashboard() {
       ? `Hello, I need healthcare assistance in ${getLanguageOption(voiceLanguage).label}. Current concern: ${input.trim()}`
       : SUPPORT_TEMPLATE_BY_LANGUAGE[voiceLanguage] || SUPPORT_TEMPLATE_BY_LANGUAGE["en-IN"];
     const attachmentHint = selectedFile ? ` I also want help with the uploaded ${documentType.replace(/_/g, " ")}.` : "";
-    const number = (import.meta.env.VITE_WHATSAPP_NUMBER || "919999999999").replace(/\D/g, "");
-    return `https://wa.me/${number}?text=${encodeURIComponent(`${baseText}${attachmentHint}`.trim())}`;
+    if (!WHATSAPP_NUMBER || WHATSAPP_NUMBER === "919999999999") {
+      return "";
+    }
+    return `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(`${baseText}${attachmentHint}`.trim())}`;
   }, [documentType, input, selectedFile, voiceLanguage]);
   const fadeUp = {
     hidden: { opacity: 0, y: 18 },
@@ -952,7 +968,7 @@ export default function PatientDashboard() {
         <motion.div variants={fadeUp} custom={0} className="dashboard-hero rounded-[2rem] px-6 py-6 sm:px-7">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <div className="inline-flex items-center gap-2 rounded-full border border-white/80 bg-white/70 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.22em] text-muted-foreground shadow-sm">
+              <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background/70 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.22em] text-muted-foreground shadow-sm backdrop-blur-xl">
                 <Sparkles className="h-3.5 w-3.5 text-primary" />
                 Patient Care Workspace
               </div>
@@ -964,7 +980,7 @@ export default function PatientDashboard() {
               </p>
               <div className="mt-4 flex flex-wrap gap-2">
                 {["Multilingual support", "Saved medical history", "Connected follow-up reminders"].map((item) => (
-                  <span key={item} className="rounded-full border border-white/75 bg-white/65 px-3 py-1.5 text-xs text-muted-foreground shadow-sm">
+                  <span key={item} className="rounded-full border border-border/60 bg-background/65 px-3 py-1.5 text-xs text-muted-foreground shadow-sm backdrop-blur-xl">
                     {item}
                   </span>
                 ))}
@@ -1002,7 +1018,7 @@ export default function PatientDashboard() {
             { label: "Appointments", value: String(patientProfile?.appointments_requested || 0), icon: Calendar },
             { label: "Urgency score", value: `${earlyWarningScore}/12`, icon: AlertTriangle },
           ].map((item) => (
-            <Card key={item.label} className="metric-card metric-card-hover border-white/70 bg-card/90 shadow-card">
+            <Card key={item.label} className="metric-card metric-card-hover border-border/60 bg-card/90 shadow-card">
               <CardContent className="flex items-center gap-4 p-5">
                 <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent">
                   <item.icon className="h-5 w-5 text-primary" />
@@ -1052,15 +1068,23 @@ export default function PatientDashboard() {
                     <Volume2 className="h-3.5 w-3.5" />
                     {autoSpeakReplies ? "Auto speak on" : "Auto speak off"}
                   </button>
-                  <a
-                    href={whatsAppHref}
-                    target="_blank"
-                    rel="noreferrer"
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!whatsAppHref) {
+                        toast({
+                          title: "WhatsApp support not configured",
+                          description: "Add a real support WhatsApp number to connect this button to Medicare Excellence.",
+                        });
+                        return;
+                      }
+                      window.open(whatsAppHref, "_blank", "noopener,noreferrer");
+                    }}
                     className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700 transition-colors hover:bg-emerald-100"
                   >
                     <Paperclip className="h-3.5 w-3.5" />
                     Open WhatsApp
-                  </a>
+                  </button>
                 </div>
               </div>
               <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
@@ -1098,7 +1122,7 @@ export default function PatientDashboard() {
                         <button
                           key={suggestion}
                           onClick={() => handleSend(suggestion)}
-                          className="rounded-3xl border border-slate-200/80 bg-gradient-to-br from-white to-sky-50/60 p-4 text-left text-sm shadow-[0_10px_28px_rgba(15,23,42,0.05)] transition-all hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-[0_16px_34px_rgba(59,167,230,0.12)]"
+                          className="rounded-3xl border border-border/60 bg-background/85 p-4 text-left text-sm shadow-[0_10px_28px_rgba(15,23,42,0.05)] transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-[0_16px_34px_rgba(15,23,42,0.10)] dark:bg-card/80"
                         >
                           <span className="block font-medium text-foreground">{suggestion}</span>
                         </button>
@@ -1118,21 +1142,21 @@ export default function PatientDashboard() {
                       className={`max-w-[85%] rounded-3xl px-4 py-3 shadow-sm sm:max-w-[78%] ${
                         message.role === "user"
                           ? "bg-primary text-primary-foreground"
-                          : "border border-slate-200/90 bg-white text-foreground shadow-[0_8px_24px_rgba(15,23,42,0.06)]"
+                          : "border border-border/60 bg-background/90 text-foreground shadow-[0_8px_24px_rgba(15,23,42,0.06)] dark:bg-card/85"
                       }`}
                     >
                       {assistantMeta && (
                         <div
                           className={`mb-3 inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[11px] font-semibold ${
                             assistantMeta.variant === "appointment"
-                              ? "bg-sky-50 text-sky-700 ring-1 ring-sky-200"
+                              ? "bg-primary/15 text-primary ring-1 ring-primary/25"
                             : assistantMeta.variant === "appointment-success"
-                                ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
+                                ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/25 dark:text-emerald-300"
                               : assistantMeta.variant === "triage-routine"
-                                ? "bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200"
+                                ? "bg-indigo-500/15 text-indigo-300 ring-1 ring-indigo-500/25 dark:text-indigo-300"
                               : assistantMeta.variant === "triage-high"
-                                ? "bg-amber-50 text-amber-800 ring-1 ring-amber-200"
-                                : "bg-rose-50 text-rose-700 ring-1 ring-rose-200"
+                                ? "bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/25 dark:text-amber-300"
+                                : "bg-rose-500/15 text-rose-300 ring-1 ring-rose-500/25 dark:text-rose-300"
                           }`}
                         >
                           {assistantMeta.variant === "emergency" ? (
@@ -1143,7 +1167,7 @@ export default function PatientDashboard() {
                             <Calendar className="h-3.5 w-3.5" />
                           )}
                           <span>{assistantMeta.title}</span>
-                          <span className="text-slate-400">•</span>
+                          <span className="text-muted-foreground">•</span>
                           <span>{assistantMeta.detail}</span>
                         </div>
                       )}
@@ -1228,13 +1252,13 @@ export default function PatientDashboard() {
                     </div>
                   )}
 
-                  <div className="rounded-[18px] border border-slate-200 bg-white px-2.5 py-1.5 shadow-[0_6px_16px_rgba(15,23,42,0.045)]">
+                  <div className="rounded-[18px] border border-border/60 bg-background/95 px-2.5 py-1.5 shadow-[0_6px_16px_rgba(15,23,42,0.045)] dark:bg-card/90">
                     <div className="flex items-end gap-1">
                       <div className="flex items-center gap-1.5 pb-0.5">
                         <button
                           type="button"
                           onClick={() => attachmentInputRef.current?.click()}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-700 transition-colors hover:bg-slate-200"
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-muted text-foreground transition-colors hover:bg-muted/80"
                           aria-label="Attach media"
                         >
                           <Plus className="h-4.5 w-4.5" />
@@ -1250,7 +1274,7 @@ export default function PatientDashboard() {
                           placeholder={`Describe your health concern in ${getLanguageLabel(voiceLanguage)}...`}
                           disabled={isSending}
                           rows={1}
-                          className="min-h-0 resize-none overflow-y-auto border-0 bg-transparent px-1.5 py-1 text-base leading-6 text-slate-900 placeholder:text-[15px] placeholder:text-slate-400 focus-visible:ring-0 focus-visible:ring-offset-0"
+                          className="min-h-0 resize-none overflow-y-auto border-0 bg-transparent px-1.5 py-1 text-base leading-6 text-foreground placeholder:text-[15px] placeholder:text-muted-foreground focus-visible:ring-0 focus-visible:ring-offset-0"
                         />
                         <input
                           ref={attachmentInputRef}
@@ -1266,7 +1290,7 @@ export default function PatientDashboard() {
                           type="button"
                           onClick={isListening ? stopVoiceCapture : startVoiceCapture}
                           className={`inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
-                            isListening ? "bg-red-500 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                            isListening ? "bg-red-500 text-white" : "bg-muted text-foreground hover:bg-muted/80"
                           }`}
                           aria-label={isListening ? "Stop voice input" : "Start voice input"}
                         >
@@ -1275,7 +1299,7 @@ export default function PatientDashboard() {
                         <button
                           type="submit"
                           disabled={isSending || (!input.trim() && !selectedFile)}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-slate-900 text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-foreground text-background transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:bg-muted"
                           aria-label="Send"
                         >
                           <ArrowUp className="h-4 w-4" />
@@ -1298,13 +1322,13 @@ export default function PatientDashboard() {
                 <CardTitle className="font-display text-lg">Today's Care Summary</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4 text-sm">
-                <div className="rounded-3xl border border-sky-200/70 bg-gradient-to-br from-sky-50 via-white to-emerald-50/70 p-5 shadow-[0_16px_34px_rgba(59,167,230,0.08)]">
+                <div className="rounded-3xl border border-border/60 bg-background/85 p-5 shadow-[0_16px_34px_rgba(15,23,42,0.06)] dark:bg-card/80">
                   <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Next best step</p>
                   <p className="mt-2 text-base font-semibold text-foreground">{patientNextStep.title}</p>
                   <p className="mt-2 text-sm text-muted-foreground">{patientNextStep.body}</p>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-2xl bg-gradient-to-br from-white to-sky-50/70 p-4 shadow-sm">
+                  <div className="rounded-2xl border border-border/60 bg-background/80 p-4 shadow-sm dark:bg-card/75">
                     <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Current care</p>
                     <div className="mt-3 flex items-start justify-between gap-3">
                       <div>
@@ -1314,14 +1338,14 @@ export default function PatientDashboard() {
                       <Badge variant={getRiskBadgeVariant(triageLabel)}>{triageLabel}</Badge>
                     </div>
                   </div>
-                  <div className="rounded-2xl bg-gradient-to-br from-white to-emerald-50/70 p-4 shadow-sm">
+                  <div className="rounded-2xl border border-border/60 bg-background/80 p-4 shadow-sm dark:bg-card/75">
                     <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Next review</p>
                     <p className="mt-3 text-lg font-semibold text-foreground">{predictedFollowupWindow}</p>
                     <p className="mt-1 text-sm text-muted-foreground">
                       {patientProfile?.followup_due_at ? getExactTimestamp(patientProfile.followup_due_at) : "The care team will set this after review."}
                     </p>
                   </div>
-                  <div className="rounded-2xl bg-muted/50 p-4">
+                  <div className="rounded-2xl border border-border/60 bg-muted/50 p-4 dark:bg-card/75">
                     <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Reminder status</p>
                     <div className="mt-3 flex items-start justify-between gap-3">
                       <div>
@@ -1331,7 +1355,7 @@ export default function PatientDashboard() {
                       <Badge variant={getRiskBadgeVariant(followupDropoutRiskLabel)}>{followupDropoutRiskLabel}</Badge>
                     </div>
                   </div>
-                  <div className="rounded-2xl bg-muted/50 p-4">
+                  <div className="rounded-2xl border border-border/60 bg-muted/50 p-4 dark:bg-card/75">
                     <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Latest readings</p>
                     <p className="mt-3 text-sm font-medium text-foreground">{latestVital ? latestVital.summary || "Vitals saved" : "No vitals shared yet"}</p>
                     <p className="mt-1 text-xs text-muted-foreground">
@@ -1340,7 +1364,7 @@ export default function PatientDashboard() {
                   </div>
                 </div>
 
-                <Accordion type="multiple" className="rounded-3xl border border-border/60 bg-gradient-to-br from-white to-slate-50/80 px-4 shadow-[0_12px_26px_rgba(15,23,42,0.04)]">
+                <Accordion type="multiple" className="rounded-3xl border border-border/60 bg-background/80 px-4 shadow-[0_12px_26px_rgba(15,23,42,0.04)] dark:bg-card/75">
                   <AccordionItem value="symptoms">
                     <AccordionTrigger className="text-sm font-medium text-foreground">Symptoms and care insights</AccordionTrigger>
                     <AccordionContent className="space-y-4 pb-4">
@@ -1563,7 +1587,7 @@ export default function PatientDashboard() {
                         <AlertDescription>{vitalError}</AlertDescription>
                       </Alert>
                     )}
-                    <div className="rounded-3xl border border-border/60 bg-gradient-to-br from-white to-sky-50/60 p-4 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+                    <div className="rounded-3xl border border-border/60 bg-background/85 p-4 shadow-[0_10px_24px_rgba(15,23,42,0.04)] dark:bg-card/80">
                       <div className="mb-4 flex items-center gap-3">
                         <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-accent">
                           <HeartPulse className="h-4.5 w-4.5 text-primary" />
@@ -1590,7 +1614,7 @@ export default function PatientDashboard() {
                             }
                             placeholder={`${field.label} (${field.placeholder})`}
                             disabled={vitalMutation.isPending}
-                            className="border-white/70 bg-white/90"
+                            className="border-border/60 bg-background/90"
                           />
                         ))}
                       </div>
@@ -1599,7 +1623,7 @@ export default function PatientDashboard() {
                         onChange={(event) => setVitalForm((current) => ({ ...current, notes: event.target.value }))}
                         placeholder="Optional notes like dizziness, fasting reading, or taken after medication."
                         disabled={vitalMutation.isPending}
-                        className="mt-3 min-h-[100px] w-full rounded-md border border-white/70 bg-white/90 px-3 py-2 text-sm"
+                        className="mt-3 min-h-[100px] w-full rounded-md border border-border/60 bg-background/90 px-3 py-2 text-sm text-foreground"
                       />
                       <Button
                         variant="hero"
@@ -1613,36 +1637,46 @@ export default function PatientDashboard() {
                         {vitalMutation.isPending ? "Saving..." : "Save Vitals"}
                       </Button>
                     </div>
-                    <div className="space-y-3">
-                      {vitals.length === 0 && (
-                        <p className="text-sm text-muted-foreground">Recent vital readings will appear here after you submit them.</p>
-                      )}
-                      {vitals.slice(0, 4).map((vital: VitalRecord) => (
-                        <div key={vital.id} className="rounded-2xl border border-border/60 bg-background/90 p-4 shadow-sm">
-                          <div className="mb-2 flex items-start justify-between gap-3">
-                            <div>
-                              <p className="font-medium text-foreground">
-                                Pulse {vital.pulse} · SpO2 {vital.spo2}% · Temp {vital.temperature}
-                              </p>
-                              <p className="text-xs text-muted-foreground">
-                                BP {vital.systolic_bp}/{vital.diastolic_bp} · Glucose {vital.glucose}
-                              </p>
+                    <Accordion type="single" collapsible className="w-full">
+                      <AccordionItem value="vital-history" className="rounded-2xl border border-border/60 bg-background/85 px-4 dark:bg-card/80">
+                        <AccordionTrigger className="py-4 text-left hover:no-underline">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-medium text-foreground">Recent vital history</span>
+                            <Badge variant="outline">{vitals.length} entries</Badge>
+                          </div>
+                        </AccordionTrigger>
+                        <AccordionContent className="space-y-3 pb-4">
+                          {vitals.length === 0 && (
+                            <p className="text-sm text-muted-foreground">Recent vital readings will appear here after you submit them.</p>
+                          )}
+                          {vitals.slice(0, 4).map((vital: VitalRecord) => (
+                            <div key={vital.id} className="rounded-2xl border border-border/60 bg-background/90 p-4 shadow-sm dark:bg-card/85">
+                              <div className="mb-2 flex items-start justify-between gap-3">
+                                <div>
+                                  <p className="font-medium text-foreground">
+                                    Pulse {vital.pulse} · SpO2 {vital.spo2}% · Temp {vital.temperature}
+                                  </p>
+                                  <p className="text-xs text-muted-foreground">
+                                    BP {vital.systolic_bp}/{vital.diastolic_bp} · Glucose {vital.glucose}
+                                  </p>
+                                </div>
+                                <Badge variant={vital.severity === "critical" || vital.severity === "high" ? "destructive" : vital.severity === "medium" ? "secondary" : "outline"}>
+                                  {vital.severity || "normal"}
+                                </Badge>
+                              </div>
+                              <p className="text-sm text-foreground">{vital.summary || "No summary available."}</p>
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                {(vital.anomaly_flags || []).map((flag) => (
+                                  <Badge key={flag} variant="outline">
+                                    {flag}
+                                  </Badge>
+                                ))}
+                              </div>
                             </div>
-                            <Badge variant={vital.severity === "critical" || vital.severity === "high" ? "destructive" : vital.severity === "medium" ? "secondary" : "outline"}>
-                              {vital.severity || "normal"}
-                            </Badge>
-                          </div>
-                          <p className="text-sm text-foreground">{vital.summary || "No summary available."}</p>
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            {(vital.anomaly_flags || []).map((flag) => (
-                              <Badge key={flag} variant="outline">
-                                {flag}
-                              </Badge>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                          ))}
+                        </AccordionContent>
+                      </AccordionItem>
+                    </Accordion>
                   </TabsContent>
 
                   <TabsContent value="documents" className="space-y-4">
@@ -1651,14 +1685,14 @@ export default function PatientDashboard() {
                         <AlertDescription>{documentError}</AlertDescription>
                       </Alert>
                     )}
-                    <div className="rounded-3xl border border-border/60 bg-gradient-to-br from-white to-emerald-50/50 p-4 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+                    <div className="rounded-3xl border border-border/60 bg-background/85 p-4 shadow-[0_10px_24px_rgba(15,23,42,0.04)] dark:bg-card/80">
                       <div className="mb-4 flex items-center gap-3">
                         <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-accent">
                           <FileText className="h-4.5 w-4.5 text-primary" />
                         </div>
                         <div>
                           <p className="text-sm font-medium text-foreground">Reports and Prescriptions</p>
-                          <p className="text-xs text-muted-foreground">Upload prescriptions, lab reports, or discharge notes and keep them linked to your care history.</p>
+                        <p className="text-xs text-muted-foreground">Upload prescriptions, lab reports, or discharge notes and keep them linked to your care history.</p>
                         </div>
                       </div>
                       <div className="space-y-3">
@@ -1667,13 +1701,13 @@ export default function PatientDashboard() {
                           onChange={(event) => setDocumentTitle(event.target.value)}
                           placeholder="Document title, e.g. CBC Lab Report"
                           disabled={uploadMutation.isPending}
-                          className="border-white/70 bg-white/90"
+                          className="border-border/60 bg-background/90"
                         />
                         <select
                           value={documentType}
                           onChange={(event) => setDocumentType(event.target.value)}
                           disabled={uploadMutation.isPending}
-                          className="flex h-10 w-full rounded-md border border-white/70 bg-white/90 px-3 py-2 text-sm"
+                          className="flex h-10 w-full rounded-md border border-border/60 bg-background/90 px-3 py-2 text-sm text-foreground"
                         >
                           <option value="lab_report">Lab Report</option>
                           <option value="prescription">Prescription</option>
@@ -1684,36 +1718,58 @@ export default function PatientDashboard() {
                         <textarea
                           value={documentNotes}
                           onChange={(event) => setDocumentNotes(event.target.value)}
-                          placeholder="Add context or paste prescription text here for medicine extraction."
+                          placeholder="For prescriptions, paste readable medicine names, dosage, timing, or any typed notes here."
                           disabled={uploadMutation.isPending}
-                          className="min-h-[110px] w-full rounded-md border border-white/70 bg-white/90 px-3 py-2 text-sm"
+                          className="min-h-[110px] w-full rounded-md border border-border/60 bg-background/90 px-3 py-2 text-sm text-foreground"
                         />
                         <input
+                          ref={documentUploadInputRef}
                           type="file"
                           disabled={uploadMutation.isPending}
                           onChange={(event) => setSelectedFile(event.target.files?.[0] || null)}
                           className="block w-full text-sm text-muted-foreground file:mr-4 file:rounded-md file:border-0 file:bg-accent file:px-3 file:py-2 file:text-sm file:font-medium"
                         />
+                        {selectedFile && (
+                          <div className="rounded-2xl border border-border/60 bg-background/80 px-3 py-3 text-sm">
+                            <p className="font-medium text-foreground">{selectedFile.name}</p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {formatFileSize(selectedFile.size)} · {documentType.replace(/_/g, " ")}
+                            </p>
+                          </div>
+                        )}
+                        {documentType === "prescription" && (
+                          <p className="text-xs text-muted-foreground">
+                            Best results: upload the prescription image and also type any readable medicine names, dosage, and timing in the notes box.
+                          </p>
+                        )}
                         <Button
                           variant="hero"
-                          disabled={uploadMutation.isPending || !documentTitle.trim()}
+                          disabled={uploadMutation.isPending || !documentTitle.trim() || (!selectedFile && !documentNotes.trim())}
                           onClick={() => {
                             setDocumentError("");
                             uploadMutation.mutate();
                           }}
                         >
-                          {uploadMutation.isPending ? "Uploading..." : "Upload Document"}
+                          {uploadMutation.isPending ? "Uploading..." : documentType === "prescription" ? "Upload Prescription" : "Upload Document"}
                         </Button>
                       </div>
                     </div>
-                    <div className="space-y-3">
+                    <Accordion type="single" collapsible className="w-full">
+                      <AccordionItem value="document-history" className="rounded-2xl border border-border/60 bg-background/85 px-4 dark:bg-card/80">
+                        <AccordionTrigger className="py-4 text-left hover:no-underline">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-medium text-foreground">Recent document history</span>
+                            <Badge variant="outline">{documents.length} entries</Badge>
+                          </div>
+                        </AccordionTrigger>
+                        <AccordionContent className="space-y-3 pb-4">
                       {documents.length === 0 && (
                         <p className="text-sm text-muted-foreground">
                           Uploaded medical documents will appear here for you and your care team.
                         </p>
                       )}
                       {documents.slice(0, 4).map((document: DocumentRecord) => (
-                        <div key={document.id} className="rounded-2xl border border-border/60 bg-background/90 p-4 shadow-sm">
+                        <div key={document.id} className="rounded-2xl border border-border/60 bg-background/90 p-4 shadow-sm dark:bg-card/85">
                           <div className="mb-2 flex items-start justify-between gap-3">
                             <div>
                               <p className="font-medium text-foreground">{document.title}</p>
@@ -1803,6 +1859,11 @@ export default function PatientDashboard() {
                                 Source: {document.ocr_source ? document.ocr_source.replace(/_/g, " ") : "manual text"} · Status:{" "}
                                 {document.ocr_status ? document.ocr_status.replace(/_/g, " ") : "not available"}
                               </p>
+                              {document.ocr_status === "handwriting_ai_unavailable" && (
+                                <p className="mt-2 text-sm text-foreground">
+                                  Tip: add typed medicine details in the notes field next time for stronger extraction on this system.
+                                </p>
+                              )}
                               {document.ai_interpretation_notes && (
                                 <p className="mt-2 text-sm text-foreground">
                                   AI interpretation note: {document.ai_interpretation_notes}
@@ -1848,7 +1909,9 @@ export default function PatientDashboard() {
                           )}
                         </div>
                       ))}
-                    </div>
+                        </AccordionContent>
+                      </AccordionItem>
+                    </Accordion>
                   </TabsContent>
                 </Tabs>
               </CardContent>
@@ -1873,46 +1936,54 @@ export default function PatientDashboard() {
                 <Badge variant="outline">{timelineEvents.length} saved events</Badge>
               </div>
             </CardHeader>
-            <CardContent className="space-y-5">
-              <div className="rounded-3xl border border-border/60 bg-gradient-to-br from-white to-sky-50/50 p-4 shadow-[0_12px_28px_rgba(15,23,42,0.04)]">
-                <p className="text-sm text-foreground">
-                  {digitalTwin?.journey_summary || "As you continue using the assistant, your longitudinal care timeline will grow here automatically."}
-                </p>
-              </div>
-
-              {timelineEvents.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-border/60 px-4 py-8 text-center text-sm text-muted-foreground">
-                  Timeline events will appear here once you chat, upload a document, record vitals, or complete a doctor visit.
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {timelineEvents.slice(0, 12).map((event) => {
-                    const TimelineIcon = getTimelineIcon(event.type);
-
-                    return (
-                      <div key={`${event.type}-${event.timestamp}-${event.title}`} className="rounded-3xl border border-border/60 bg-gradient-to-br from-white to-slate-50/70 p-4 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                          <div className="flex items-start gap-3">
-                            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-accent">
-                              <TimelineIcon className="h-4.5 w-4.5 text-primary" />
-                            </div>
-                            <div>
-                              <div className="flex flex-wrap items-center gap-2">
-                                <p className="text-sm font-semibold text-foreground">{event.title}</p>
-                                <Badge variant={getRiskBadgeVariant(event.severity)}>{formatLabel(event.severity)}</Badge>
-                              </div>
-                              <p className="mt-1 text-sm leading-6 text-muted-foreground">{event.detail}</p>
-                            </div>
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            {getExactTimestamp(event.timestamp)}
-                          </div>
-                        </div>
+            <CardContent>
+              <Accordion type="single" collapsible className="w-full">
+                <AccordionItem value="care-journey-timeline" className="border-border/60">
+                  <AccordionTrigger className="py-2 text-left hover:no-underline">
+                    <div className="space-y-2">
+                      <p className="text-sm text-foreground">
+                        {digitalTwin?.journey_summary || "As you continue using the assistant, your longitudinal care timeline will grow here automatically."}
+                      </p>
+                      <p className="text-xs text-muted-foreground">Open the full timeline only when you want the detailed care history.</p>
+                    </div>
+                  </AccordionTrigger>
+                  <AccordionContent className="space-y-5 pt-3">
+                    {timelineEvents.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-border/60 px-4 py-8 text-center text-sm text-muted-foreground">
+                        Timeline events will appear here once you chat, upload a document, record vitals, or complete a doctor visit.
                       </div>
-                    );
-                  })}
-                </div>
-              )}
+                    ) : (
+                      <div className="space-y-3">
+                        {timelineEvents.slice(0, 12).map((event) => {
+                          const TimelineIcon = getTimelineIcon(event.type);
+
+                          return (
+                            <div key={`${event.type}-${event.timestamp}-${event.title}`} className="rounded-3xl border border-border/60 bg-background/85 p-4 shadow-[0_10px_24px_rgba(15,23,42,0.04)] dark:bg-card/80">
+                              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                <div className="flex items-start gap-3">
+                                  <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-accent">
+                                    <TimelineIcon className="h-4.5 w-4.5 text-primary" />
+                                  </div>
+                                  <div>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <p className="text-sm font-semibold text-foreground">{event.title}</p>
+                                      <Badge variant={getRiskBadgeVariant(event.severity)}>{formatLabel(event.severity)}</Badge>
+                                    </div>
+                                    <p className="mt-1 text-sm leading-6 text-muted-foreground">{event.detail}</p>
+                                  </div>
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  {getExactTimestamp(event.timestamp)}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </AccordionContent>
+                </AccordionItem>
+              </Accordion>
             </CardContent>
           </Card>
         </motion.div>

@@ -6,10 +6,14 @@ import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import ProtectedRoute from "./components/ProtectedRoute";
+import { ThemeProvider } from "./components/theme-provider";
 const LandingPage = lazy(() => import("./pages/LandingPage"));
 const PatientDashboard = lazy(() => import("./pages/PatientDashboard"));
 const DoctorDashboard = lazy(() => import("./pages/DoctorDashboard"));
+const DoctorSlotManagerPage = lazy(() => import("./pages/DoctorSlotManagerPage"));
+const DoctorAssignedPatientsPage = lazy(() => import("./pages/DoctorAssignedPatientsPage"));
 const HospitalAdminDashboard = lazy(() => import("./pages/HospitalAdminDashboard"));
+const HospitalDoctorWorkloadPage = lazy(() => import("./pages/HospitalDoctorWorkloadPage"));
 const DoctorAccessPage = lazy(() => import("./pages/DoctorAccessPage"));
 const AnalyticsDashboard = lazy(() => import("./pages/AnalyticsDashboard"));
 const DoctorSearch = lazy(() => import("./pages/DoctorSearch"));
@@ -62,99 +66,125 @@ function PublicOnlyRoute({ children }: { children: JSX.Element }) {
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <AuthProvider>
-        <Toaster />
-        <Sonner />
-        <BrowserRouter>
-          <Suspense fallback={<div className="min-h-screen bg-background" />}>
-            <Routes>
-              <Route path="/" element={<HomeRoute />} />
-              <Route
-                path="/login"
-                element={
-                  <PublicOnlyRoute>
-                    <AuthPage mode="login" />
-                  </PublicOnlyRoute>
-                }
-              />
-              <Route
-                path="/signup"
-                element={
-                  <PublicOnlyRoute>
-                    <AuthPage mode="signup" />
-                  </PublicOnlyRoute>
-                }
-              />
-              <Route path="/verify-email" element={<VerifyEmailPage />} />
-              <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-              <Route path="/reset-password" element={<ResetPasswordPage />} />
-              <Route
-                path="/patient"
-                element={
-                  <ProtectedRoute allowedRoles={["patient"]}>
-                    <PatientDashboard />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/doctor"
-                element={
-                  <ProtectedRoute allowedRoles={["doctor"]}>
-                    <DoctorDashboard />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/admin"
-                element={
-                  <ProtectedRoute allowedRoles={["hospital_admin"]}>
-                    <HospitalAdminDashboard />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/admin/access"
-                element={
-                  <ProtectedRoute allowedRoles={["hospital_admin"]}>
-                    <DoctorAccessPage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/doctors"
-                element={
-                  <ProtectedRoute allowedRoles={["patient"]}>
-                    <DoctorSearch />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/appointments"
-                element={
-                  <ProtectedRoute allowedRoles={["patient"]}>
-                    <AppointmentBooking />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/analytics"
-                element={
-                  <ProtectedRoute allowedRoles={["hospital_admin"]}>
-                    <AnalyticsDashboard />
-                  </ProtectedRoute>
-                }
-              />
-              <Route path="/ai-assistant" element={<Navigate to="/patient" replace />} />
-              <Route path="/patient-dashboard" element={<Navigate to="/patient" replace />} />
-              <Route path="/doctor-dashboard" element={<Navigate to="/doctor" replace />} />
-              <Route path="/admin-dashboard" element={<Navigate to="/admin" replace />} />
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </Suspense>
-        </BrowserRouter>
-      </AuthProvider>
-    </TooltipProvider>
+    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
+      <TooltipProvider>
+        <AuthProvider>
+          <Toaster />
+          <Sonner />
+          <BrowserRouter>
+            <Suspense fallback={<div className="min-h-screen bg-background" />}>
+              <Routes>
+                <Route path="/" element={<HomeRoute />} />
+                <Route
+                  path="/login"
+                  element={
+                    <PublicOnlyRoute>
+                      <AuthPage mode="login" />
+                    </PublicOnlyRoute>
+                  }
+                />
+                <Route
+                  path="/signup"
+                  element={
+                    <PublicOnlyRoute>
+                      <AuthPage mode="signup" />
+                    </PublicOnlyRoute>
+                  }
+                />
+                <Route path="/verify-email" element={<VerifyEmailPage />} />
+                <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+                <Route path="/reset-password" element={<ResetPasswordPage />} />
+                <Route
+                  path="/patient"
+                  element={
+                    <ProtectedRoute allowedRoles={["patient"]}>
+                      <PatientDashboard />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/doctor"
+                  element={
+                    <ProtectedRoute allowedRoles={["doctor"]}>
+                      <DoctorDashboard />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/doctor/slots"
+                  element={
+                    <ProtectedRoute allowedRoles={["doctor"]}>
+                      <DoctorSlotManagerPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/doctor/patients"
+                  element={
+                    <ProtectedRoute allowedRoles={["doctor"]}>
+                      <DoctorAssignedPatientsPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/admin"
+                  element={
+                    <ProtectedRoute allowedRoles={["hospital_admin"]}>
+                      <HospitalAdminDashboard />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/admin/doctors"
+                  element={
+                    <ProtectedRoute allowedRoles={["hospital_admin"]}>
+                      <HospitalDoctorWorkloadPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/admin/access"
+                  element={
+                    <ProtectedRoute allowedRoles={["hospital_admin"]}>
+                      <DoctorAccessPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/doctors"
+                  element={
+                    <ProtectedRoute allowedRoles={["patient"]}>
+                      <DoctorSearch />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/appointments"
+                  element={
+                    <ProtectedRoute allowedRoles={["patient"]}>
+                      <AppointmentBooking />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/analytics"
+                  element={
+                    <ProtectedRoute allowedRoles={["hospital_admin"]}>
+                      <AnalyticsDashboard />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route path="/ai-assistant" element={<Navigate to="/patient" replace />} />
+                <Route path="/patient-dashboard" element={<Navigate to="/patient" replace />} />
+                <Route path="/doctor-dashboard" element={<Navigate to="/doctor" replace />} />
+                <Route path="/admin-dashboard" element={<Navigate to="/admin" replace />} />
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </Suspense>
+          </BrowserRouter>
+        </AuthProvider>
+      </TooltipProvider>
+    </ThemeProvider>
   </QueryClientProvider>
 );
 

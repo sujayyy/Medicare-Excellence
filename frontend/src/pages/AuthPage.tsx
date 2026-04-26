@@ -1,9 +1,8 @@
-import { useMemo, useState } from "react";
-import { motion } from "framer-motion";
-import { ArrowRight, Eye, EyeOff, Heart, LockKeyhole, Mail, ShieldCheck, Sparkles, UserRound } from "lucide-react";
+import { useState } from "react";
+import { ArrowRight, Eye, EyeOff } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
-import SupportFab from "@/components/SupportFab";
+import ThemeToggle from "@/components/ThemeToggle";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -32,6 +31,8 @@ const doctorSpecialties = [
 
 const countryCodes = ["+91", "+1", "+44", "+61", "+971", "+65"];
 const currentYear = new Date().getFullYear();
+const VIDEO_URL =
+  "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260315_073750_51473149-4350-4920-ae24-c8214286f323.mp4";
 const nativeSelectClass =
   "h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground shadow-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring";
 
@@ -62,27 +63,6 @@ export default function AuthPage({ mode }: { mode: "login" | "signup" }) {
   const [successMessage, setSuccessMessage] = useState(flash?.message || "");
   const [previewUrl, setPreviewUrl] = useState(flash?.preview_url || "");
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const sideCards = useMemo(
-    () => [
-      {
-        icon: ShieldCheck,
-        title: "Protected identities",
-        description: "Role-aware access, secure sessions, and admin review keep the workspace tightly controlled.",
-      },
-      {
-        icon: LockKeyhole,
-        title: "Recovery-ready auth",
-        description: "Forgot-password recovery is built directly into the sign-in experience.",
-      },
-      {
-        icon: Mail,
-        title: "Clinical continuity",
-        description: "Chats, documents, appointments, and patient context remain attached to the same account lifecycle.",
-      },
-    ],
-    [],
-  );
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -141,89 +121,69 @@ export default function AuthPage({ mode }: { mode: "login" | "signup" }) {
   }
 
   return (
-    <div className="cinematic-mesh relative min-h-screen overflow-y-auto overflow-x-hidden px-4 py-5">
-      <div className="aurora-rings pointer-events-none absolute inset-0 opacity-70" />
-      <div className="scanlines pointer-events-none absolute inset-0 opacity-20" />
-      <motion.div
-        className="hero-orb left-[6%] top-[10%] h-36 w-36"
-        animate={{ y: [0, -16, 0], x: [0, 8, 0] }}
-        transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
-      />
-      <motion.div
-        className="hero-orb right-[10%] top-[18%] h-48 w-48"
-        animate={{ y: [0, 22, 0], x: [0, -10, 0] }}
-        transition={{ duration: 10, repeat: Infinity, ease: "easeInOut" }}
-      />
-      <motion.div
-        className="hero-orb bottom-[8%] left-[28%] h-40 w-40"
-        animate={{ y: [0, -20, 0], x: [0, 6, 0] }}
-        transition={{ duration: 9, repeat: Infinity, ease: "easeInOut" }}
-      />
+    <div className="landing-shell relative min-h-screen overflow-y-auto overflow-x-hidden bg-background px-4 py-5 text-foreground">
+      <div className="pointer-events-none absolute inset-0">
+        <video className="hero-video" src={VIDEO_URL} autoPlay loop muted playsInline />
+        <div className="hero-grid" />
+        <div className="hero-video-mask opacity-80 dark:opacity-100" />
+      </div>
 
-      <div className="relative mx-auto grid min-h-[calc(100vh-2.5rem)] max-w-6xl gap-6 lg:grid-cols-[1fr_440px] lg:items-center">
-        <div className="max-w-2xl space-y-5">
-          <Link to="/" className="inline-flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-hero shadow-glow">
-              <Heart className="h-5 w-5 text-white" />
-            </div>
+      <div className="relative z-10 mx-auto flex min-h-[calc(100vh-2.5rem)] max-w-5xl flex-col">
+        <div className="flex items-center justify-between py-3">
+          <Link to="/" className="flex items-center gap-3">
+            <img src="/favicon.svg" alt="Medicare Excellence" className="h-10 w-10 rounded-2xl" />
             <div>
-              <p className="font-display text-lg font-bold text-foreground">Medicare Excellence</p>
-              <p className="text-xs text-muted-foreground">Secure digital hospital operations</p>
+              <p className="font-display text-lg font-semibold tracking-tight text-white">Medicare Excellence</p>
+              <p className="text-xs uppercase tracking-[0.22em] text-white/60">AI hospital coordination</p>
             </div>
           </Link>
-
-          <div className="space-y-4">
-            <div className="inline-flex items-center gap-2 rounded-full border border-white/70 bg-white/65 px-4 py-1.5 text-xs font-medium uppercase tracking-[0.24em] text-muted-foreground backdrop-blur-xl">
-              <Sparkles className="h-3.5 w-3.5 text-primary" />
-              Verified Clinical Access
-            </div>
-            <h1 className="max-w-3xl font-display text-3xl font-semibold leading-[0.98] tracking-[-0.045em] text-foreground sm:text-[3.35rem]">
-              {isSignup ? "Create a trusted care identity." : "Step back into your clinical workspace."}
-            </h1>
-            <p className="max-w-2xl text-base leading-7 text-muted-foreground">
-              {isSignup
-                ? "Patients join directly, doctors request access, and every identity is reviewed before entering the live hospital workflow."
-                : "Sign in to continue patient care, clinician coordination, and hospital operations without losing your history."}
-            </p>
-          </div>
-
-          <div className="grid gap-3 md:grid-cols-3">
-            {sideCards.map((card, index) => (
-              <motion.div
-                key={card.title}
-                initial={{ opacity: 0, y: 18 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: index * 0.08, duration: 0.4 }}
-                className="depth-card rounded-[1.5rem] border border-white/70 p-4"
-              >
-                <card.icon className="mb-4 h-5 w-5 text-primary" />
-                <p className="font-display text-base font-semibold text-foreground">{card.title}</p>
-                <p className="mt-2 text-xs leading-5 text-muted-foreground">{card.description}</p>
-              </motion.div>
-            ))}
-          </div>
+          <ThemeToggle className="rounded-full border border-border/60 bg-background/65 backdrop-blur-xl hover:bg-background/85" />
         </div>
 
-        <Card className="glass-panel beam-border w-full rounded-[1.75rem] border-0">
+        <div className="flex flex-1 items-center justify-center py-6 lg:py-10">
+          <Card className={`glass-panel beam-border w-full rounded-[2rem] border-0 ${isSignup ? "max-w-2xl" : "max-w-lg"}`}>
           <CardHeader className="space-y-1 pb-4">
-            <CardTitle className="font-display text-2xl font-semibold">{isSignup ? "Create account" : "Sign in"}</CardTitle>
-            <CardDescription className="text-sm leading-6">
-              {isSignup
-                ? "Patients create accounts directly. Doctors request access and wait for hospital-admin approval."
-                : "Sign in with your verified email to continue into the correct workspace."}
-            </CardDescription>
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <img src="/favicon.svg" alt="Medicare Excellence" className="h-11 w-11 rounded-2xl" />
+                <div>
+                  <p className="font-display text-lg font-semibold tracking-tight text-white">Medicare Excellence</p>
+                  <p className="text-xs uppercase tracking-[0.2em] text-white/60">Hospital workspace</p>
+                </div>
+              </div>
+              <div className="inline-flex rounded-full border border-border/60 bg-background/55 p-1 backdrop-blur-xl">
+                <Link
+                  to="/login"
+                  className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
+                    !isSignup ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  Sign in
+                </Link>
+                <Link
+                  to="/signup"
+                  className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
+                    isSignup ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  Create account
+                </Link>
+              </div>
+            </div>
+            <CardTitle className="font-display text-2xl font-semibold text-white">{isSignup ? "Create account" : "Sign in"}</CardTitle>
+            <CardDescription className="text-sm leading-6 text-white/70">{isSignup ? "Create your account." : "Sign in to continue."}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <form onSubmit={handleSubmit} className="space-y-3">
               {isSignup ? (
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">Full name</label>
+                  <label className="text-sm font-medium text-white">Full name</label>
                   <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Ava Patel" />
                 </div>
               ) : null}
 
               <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">Email</label>
+                <label className="text-sm font-medium text-white">Email</label>
                 <Input
                   type="email"
                   value={email}
@@ -234,7 +194,7 @@ export default function AuthPage({ mode }: { mode: "login" | "signup" }) {
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <label className="text-sm font-medium text-foreground">Password</label>
+                  <label className="text-sm font-medium text-white">Password</label>
                   {!isSignup ? (
                     <Link to="/forgot-password" className="text-xs font-medium text-primary hover:text-primary/80">
                       Forgot password?
@@ -262,7 +222,7 @@ export default function AuthPage({ mode }: { mode: "login" | "signup" }) {
 
               {isSignup ? (
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">Role</label>
+                  <label className="text-sm font-medium text-white">Role</label>
                   <select
                     className={nativeSelectClass}
                     value={role}
@@ -277,7 +237,7 @@ export default function AuthPage({ mode }: { mode: "login" | "signup" }) {
 
               {isSignup && role === "doctor" ? (
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">Specialty</label>
+                  <label className="text-sm font-medium text-white">Specialty</label>
                   <select
                     className={nativeSelectClass}
                     value={specialty}
@@ -295,7 +255,7 @@ export default function AuthPage({ mode }: { mode: "login" | "signup" }) {
               {isSignup && role === "patient" ? (
                 <>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium text-foreground">Phone number</label>
+                    <label className="text-sm font-medium text-white">Phone number</label>
                     <div className="grid gap-3 sm:grid-cols-[140px_minmax(0,1fr)]">
                       <select
                         className={nativeSelectClass}
@@ -319,7 +279,7 @@ export default function AuthPage({ mode }: { mode: "login" | "signup" }) {
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-2">
-                      <label className="text-sm font-medium text-foreground">Date of birth</label>
+                      <label className="text-sm font-medium text-white">Date of birth</label>
                       <Input
                         type="date"
                         value={dob}
@@ -330,7 +290,7 @@ export default function AuthPage({ mode }: { mode: "login" | "signup" }) {
                       <p className="text-xs text-muted-foreground">Use the calendar icon or type in the date field.</p>
                     </div>
                     <div className="space-y-2">
-                      <label className="text-sm font-medium text-foreground">Gender</label>
+                      <label className="text-sm font-medium text-white">Gender</label>
                       <select className={nativeSelectClass} value={gender} onChange={(event) => setGender(event.target.value)}>
                         <option value="male">Male</option>
                         <option value="female">Female</option>
@@ -373,18 +333,15 @@ export default function AuthPage({ mode }: { mode: "login" | "signup" }) {
             </form>
 
             <div className="flex items-center justify-between rounded-2xl bg-muted/45 px-4 py-3 text-sm text-muted-foreground">
-              <span className="inline-flex items-center gap-2">
-                <UserRound className="h-4 w-4 text-primary" />
-                {isSignup ? "Already have an account?" : "Need a new account?"}
-              </span>
+              <span>{isSignup ? "Already have an account?" : "Need a new account?"}</span>
               <Link to={isSignup ? "/login" : "/signup"} className="font-medium text-primary hover:text-primary/80">
                 {isSignup ? "Sign in" : "Create one"}
               </Link>
             </div>
           </CardContent>
         </Card>
+        </div>
       </div>
-      <SupportFab />
     </div>
   );
 }

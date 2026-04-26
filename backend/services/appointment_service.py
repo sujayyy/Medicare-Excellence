@@ -203,6 +203,8 @@ def get_doctor_slot_catalog(user: dict[str, Any], *, doctor_id: str) -> dict[str
 
     doctor_appointments = list_appointments(hospital_id=hospital_id, assigned_doctor_id=doctor_id)
     slots = [_serialize_slot_with_bookings(slot, doctor_appointments) for slot in _normalized_doctor_slots(doctor)]
+    if user.get("role") == "patient":
+        slots = [slot for slot in slots if slot.get("is_available")]
     return {
         "doctor": {
             "id": str(doctor.get("_id")),

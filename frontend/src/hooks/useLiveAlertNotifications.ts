@@ -42,6 +42,16 @@ export function useLiveAlertNotifications({
 
   const alerts = alertsQuery.data?.alerts || [];
 
+  const getToastDescription = (alert: AlertRecord) => {
+    if (alert.type === "doctor_access_request") {
+      return alert.message;
+    }
+    if (alert.patient_name) {
+      return `${alert.title}: ${alert.patient_name} needs review.`;
+    }
+    return alert.message || `${alert.title} needs review.`;
+  };
+
   useEffect(() => {
     const openAlertIds = new Set(alerts.filter((alert) => alert.status === "open").map((alert) => alert.id));
 
@@ -59,7 +69,7 @@ export function useLiveAlertNotifications({
       toast({
         variant: newestAlert.severity === "critical" || newestAlert.severity === "high" ? "destructive" : "default",
         title: `${audienceLabel} notification`,
-        description: `${newestAlert.title}: ${newestAlert.patient_name || "Patient"} needs review.`,
+        description: getToastDescription(newestAlert),
       });
     }
 

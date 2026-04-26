@@ -251,6 +251,14 @@ Rules:
         return {}
 
 
+def _handwriting_ai_available() -> bool:
+    return bool(os.getenv("GEMINI_API_KEY") and genai is not None)
+
+
+def _local_ocr_available() -> bool:
+    return bool(Image is not None and pytesseract is not None)
+
+
 def extract_document_text(
     *,
     notes: str,
@@ -307,6 +315,13 @@ def extract_document_text(
 
     combined_text = "\n".join(part for part in [notes.strip(), extracted_text.strip(), file_name.strip()] if part).strip()
     excerpt = extracted_text[:280] if extracted_text else combined_text[:280]
+    if _looks_like_image(file_name, content_type, header) and not extracted_text.strip():
+        if not _handwriting_ai_available() and not _local_ocr_available():
+            ocr_status = "handwriting_ai_unavailable"
+            ocr_source = "image_upload"
+        elif not _handwriting_ai_available() and _local_ocr_available():
+            ocr_status = "ocr_unavailable"
+            ocr_source = "image_upload"
 
     return {
         "combined_text": combined_text,

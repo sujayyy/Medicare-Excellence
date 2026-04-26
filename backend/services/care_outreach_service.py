@@ -8,7 +8,10 @@ from models.base import serialize_document
 
 
 def _clean_phone(value: str) -> str:
-    return "".join(character for character in str(value or "") if character.isdigit())
+    digits = "".join(character for character in str(value or "") if character.isdigit())
+    if len(digits) == 10:
+        return f"91{digits}"
+    return digits
 
 
 def _build_message(patient: dict, *, channel: str) -> str:

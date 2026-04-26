@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/context/AuthContext";
 import { approveAccessRequest, ApiError, getAccessRequests, rejectAccessRequest } from "@/lib/api";
+import { useLiveAlertNotifications } from "@/hooks/useLiveAlertNotifications";
 import { useToast } from "@/hooks/use-toast";
 
 function specialtyLabel(value?: string) {
@@ -23,6 +24,14 @@ export default function DoctorAccessPage() {
     queryKey: ["doctor-access-requests"],
     queryFn: () => getAccessRequests(token || ""),
     enabled: Boolean(token),
+    refetchInterval: 8000,
+    refetchIntervalInBackground: true,
+  });
+
+  useLiveAlertNotifications({
+    token: token || "",
+    queryKey: ["hospital-admin-alerts", "doctor-access-page"],
+    audienceLabel: "Doctor access",
   });
 
   const approveMutation = useMutation({
@@ -48,6 +57,7 @@ export default function DoctorAccessPage() {
     mutationFn: (requestId: string) => rejectAccessRequest(token || "", requestId),
     onSuccess: async () => {
       await requestsQuery.refetch();
+      void queryClient.invalidateQueries({ queryKey: ["hospital-admin-alerts"] });
       toast({
         title: "Access request rejected",
         description: "The doctor request has been closed.",

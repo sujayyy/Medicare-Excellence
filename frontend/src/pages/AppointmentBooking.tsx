@@ -1,7 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Calendar, Clock, FileText, MapPin, Phone, UserRound } from "lucide-react";
+import { Calendar, Clock, FileText, MapPin, Phone, Sparkles, UserRound } from "lucide-react";
 
 import DashboardLayout from "@/components/DashboardLayout";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -34,6 +34,52 @@ function getStatusVariant(status?: string) {
   return "outline" as const;
 }
 
+function formatSpecialtyLabel(value?: string | null) {
+  if (!value) {
+    return "";
+  }
+  return value.replace(/_/g, " ").replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function inferSuggestedSpecialty(input: {
+  assignedDoctorSpecialty?: string;
+  symptoms?: string[];
+  triageReason?: string;
+  summaryHeadline?: string;
+  clinicalSummary?: string;
+}) {
+  if (input.assignedDoctorSpecialty) {
+    return input.assignedDoctorSpecialty;
+  }
+
+  const text = [
+    ...(input.symptoms || []),
+    input.triageReason || "",
+    input.summaryHeadline || "",
+    input.clinicalSummary || "",
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  const specialtyMatchers: Array<{ specialty: string; keywords: string[] }> = [
+    { specialty: "dermatology", keywords: ["skin", "rash", "itch", "itching", "eczema", "acne", "allergy", "psoriasis"] },
+    { specialty: "cardiology", keywords: ["chest pain", "heart", "palpitation", "blood pressure", "hypertension"] },
+    { specialty: "pulmonology", keywords: ["cough", "asthma", "breath", "breathing", "wheezing", "lungs"] },
+    { specialty: "neurology", keywords: ["headache", "migraine", "seizure", "dizziness", "numbness", "stroke"] },
+    { specialty: "orthopedics", keywords: ["back pain", "joint", "knee", "bone", "fracture", "shoulder", "leg pain"] },
+    { specialty: "ophthalmology", keywords: ["eye", "vision", "blurry", "red eye", "sight"] },
+    { specialty: "ent", keywords: ["ear", "nose", "throat", "sinus", "tonsil", "hearing"] },
+    { specialty: "gastroenterology", keywords: ["stomach", "abdomen", "vomiting", "nausea", "diarrhea", "constipation"] },
+    { specialty: "gynecology", keywords: ["period", "menstrual", "pelvic", "pregnancy", "uterus"] },
+    { specialty: "psychiatry", keywords: ["anxiety", "depression", "panic", "sleep", "stress"] },
+    { specialty: "urology", keywords: ["urine", "bladder", "kidney", "burning urination"] },
+    { specialty: "pediatrics", keywords: ["child", "baby", "infant", "pediatric"] },
+  ];
+
+  const match = specialtyMatchers.find((entry) => entry.keywords.some((keyword) => text.includes(keyword)));
+  return match?.specialty || "";
+}
+
 
 export default function AppointmentBooking() {
   const { token, user, profile } = useAuth();
@@ -45,10 +91,28 @@ export default function AppointmentBooking() {
   const [notes, setNotes] = useState("");
   const [bookingError, setBookingError] = useState("");
 
-  const doctorsQuery = useQuery({
-    queryKey: ["doctor-directory"],
-    queryFn: () => getDoctors(token || ""),
+  const suggestedSpecialty = useMemo(
+    () =>
+      inferSuggestedSpecialty({
+        assignedDoctorSpecialty: profile?.assigned_doctor_specialty,
+        symptoms: profile?.symptoms,
+        triageReason: profile?.triage_reason,
+        summaryHeadline: profile?.summary_headline,
+        clinicalSummary: profile?.clinical_summary,
+      }),
+    [profile?.assigned_doctor_specialty, profile?.clinical_summary, profile?.summary_headline, profile?.symptoms, profile?.triage_reason],
+  );
+
+  const recommendedDoctorsQuery = useQuery({
+    queryKey: ["doctor-directory", suggestedSpecialty || "all"],
+    queryFn: () => getDoctors(token || "", suggestedSpecialty || undefined),
     enabled: Boolean(token),
+  });
+
+  const allDoctorsQuery = useQuery({
+    queryKey: ["doctor-directory", "fallback-all"],
+    queryFn: () => getDoctors(token || ""),
+    enabled: Boolean(token && suggestedSpecialty),
   });
 
   const appointmentsQuery = useQuery({
@@ -57,9 +121,21 @@ export default function AppointmentBooking() {
     enabled: Boolean(token),
   });
 
+  const matchedDoctors = recommendedDoctorsQuery.data?.doctors || [];
+  const fallbackDoctors = allDoctorsQuery.data?.doctors || [];
+  const isShowingFallbackDoctors = Boolean(suggestedSpecialty && matchedDoctors.length === 0 && fallbackDoctors.length > 0);
+  const doctorDirectory = suggestedSpecialty ? (matchedDoctors.length > 0 ? matchedDoctors : fallbackDoctors) : matchedDoctors;
+
+  useEffect(() => {
+    if (selectedDoctorId && !doctorDirectory.some((doctor) => doctor.id === selectedDoctorId)) {
+      setSelectedDoctorId("");
+      setSelectedSlotId("");
+    }
+  }, [doctorDirectory, selectedDoctorId]);
+
   const selectedDoctor = useMemo(
-    () => (doctorsQuery.data?.doctors || []).find((doctor) => doctor.id === selectedDoctorId),
-    [doctorsQuery.data?.doctors, selectedDoctorId],
+    () => doctorDirectory.find((doctor) => doctor.id === selectedDoctorId),
+    [doctorDirectory, selectedDoctorId],
   );
 
   const doctorSlotsQuery = useQuery({
@@ -110,11 +186,11 @@ export default function AppointmentBooking() {
           </p>
         </div>
 
-        {(doctorsQuery.error || appointmentsQuery.error) && (
+        {(recommendedDoctorsQuery.error || allDoctorsQuery.error || appointmentsQuery.error) && (
           <Alert variant="destructive">
             <AlertDescription>
-              {(doctorsQuery.error || appointmentsQuery.error) instanceof ApiError
-                ? ((doctorsQuery.error || appointmentsQuery.error) as ApiError).message
+              {(recommendedDoctorsQuery.error || allDoctorsQuery.error || appointmentsQuery.error) instanceof ApiError
+                ? ((recommendedDoctorsQuery.error || allDoctorsQuery.error || appointmentsQuery.error) as ApiError).message
                 : "Unable to load appointment data right now."}
             </AlertDescription>
           </Alert>
@@ -126,6 +202,39 @@ export default function AppointmentBooking() {
               <CardTitle className="font-display text-lg">Select Doctor And Slot</CardTitle>
             </CardHeader>
             <CardContent className="space-y-5">
+              <div className="rounded-2xl border border-border/60 bg-muted/35 p-4">
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5 rounded-xl bg-accent p-2">
+                    <Sparkles className="h-4 w-4 text-primary" />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Suggested doctor match</p>
+                    {suggestedSpecialty ? (
+                      <>
+                        <p className="text-sm font-medium text-foreground">
+                          Recommended specialty: {formatSpecialtyLabel(suggestedSpecialty)}
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          We’re using the patient’s current concern to surface the most relevant hospital doctors first.
+                        </p>
+                        {matchedDoctors.length === 0 && !recommendedDoctorsQuery.isLoading && (
+                          <p className="text-sm text-muted-foreground">
+                            No {formatSpecialtyLabel(suggestedSpecialty).toLowerCase()} doctors are available in this hospital right now. Showing the rest of the hospital doctor list instead.
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-sm font-medium text-foreground">No specialty recommendation yet</p>
+                        <p className="text-sm text-muted-foreground">
+                          You can still choose from all available doctors and book a live slot normally.
+                        </p>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+
               {bookingError && (
                 <Alert variant="destructive">
                   <AlertDescription>{bookingError}</AlertDescription>
@@ -133,7 +242,7 @@ export default function AppointmentBooking() {
               )}
 
               <div className="grid gap-3 md:grid-cols-2">
-                {(doctorsQuery.data?.doctors || []).map((doctor) => {
+                {doctorDirectory.map((doctor) => {
                   const isSelected = doctor.id === selectedDoctorId;
                   return (
                     <button
@@ -157,6 +266,11 @@ export default function AppointmentBooking() {
                       <p className="mt-3 text-xs text-muted-foreground">{doctor.email}</p>
                       <div className="mt-3 flex flex-wrap gap-2">
                         <Badge variant="outline">{doctor.open_slot_count || 0} open slots</Badge>
+                        {suggestedSpecialty &&
+                          !isShowingFallbackDoctors &&
+                          suggestedSpecialty === (doctor.specialty || "").toLowerCase() && (
+                            <Badge variant="secondary">Recommended match</Badge>
+                          )}
                         {doctor.next_open_slot && (
                           <Badge variant="secondary">
                             Next: {doctor.next_open_slot.date} · {doctor.next_open_slot.time}
@@ -168,9 +282,11 @@ export default function AppointmentBooking() {
                 })}
               </div>
 
-              {(doctorsQuery.data?.doctors || []).length === 0 && (
+              {doctorDirectory.length === 0 && !recommendedDoctorsQuery.isLoading && !allDoctorsQuery.isLoading && (
                 <div className="rounded-2xl border border-dashed border-border/70 p-5 text-sm text-muted-foreground">
-                  No doctor accounts are available yet. Ask the hospital admin to create doctor logins first.
+                  {suggestedSpecialty
+                    ? `No ${formatSpecialtyLabel(suggestedSpecialty).toLowerCase()} doctors are available in this hospital yet. Ask the admin to add a doctor in that specialty.`
+                    : "No doctor accounts are available yet. Ask the hospital admin to create doctor logins first."}
                 </div>
               )}
 
@@ -194,24 +310,20 @@ export default function AppointmentBooking() {
                 <label className="text-sm font-medium text-foreground">Choose an open slot</label>
                 {selectedDoctorId && availableSlots.length === 0 && !doctorSlotsQuery.isLoading && (
                   <div className="rounded-2xl border border-dashed border-border/70 p-5 text-sm text-muted-foreground">
-                    This doctor has not published open slots yet. Ask the doctor or hospital admin to release appointment times.
+                    This doctor does not have any live bookable slots right now. Ask the doctor to publish a future opening and refresh this page.
                   </div>
                 )}
                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                   {availableSlots.map((slot) => {
-                    const isBooked = !slot.is_available;
                     return (
                       <button
                         key={slot.id}
                         type="button"
-                        disabled={isBooked}
                         onClick={() => setSelectedSlotId(slot.id)}
                         className={`rounded-2xl border px-4 py-3 text-left text-sm transition-colors ${
-                          isBooked
-                            ? "cursor-not-allowed border-border/50 bg-muted/50 text-muted-foreground"
-                            : selectedSlotId === slot.id
-                              ? "border-primary bg-accent text-primary"
-                              : "border-border/60 bg-background hover:border-primary/50"
+                          selectedSlotId === slot.id
+                            ? "border-primary bg-accent text-primary"
+                            : "border-border/60 bg-background hover:border-primary/50"
                         }`}
                       >
                         <p className="font-medium">{slot.date} · {slot.time}</p>
@@ -273,7 +385,9 @@ export default function AppointmentBooking() {
                 <div className="rounded-2xl bg-muted/50 p-4">
                   <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Selected doctor</p>
                   <p className="mt-2 text-sm text-foreground">
-                    {selectedDoctor ? `${selectedDoctor.name} · ${selectedDoctor.specialty_label || selectedDoctor.specialty}` : "No doctor selected yet"}
+                    {selectedDoctor
+                      ? `${selectedDoctor.name} · ${selectedDoctor.specialty_label || formatSpecialtyLabel(selectedDoctor.specialty)}`
+                      : "No doctor selected yet"}
                   </p>
                 </div>
               </CardContent>

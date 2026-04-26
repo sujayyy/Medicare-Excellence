@@ -300,13 +300,25 @@ def _validate_patient_profile_fields(role: str, payload: dict[str, Any]) -> dict
     }
 
 
+def _resolve_hospital_id(requested_hospital_id: Any) -> str:
+    normalized = (requested_hospital_id or "").strip()
+    if normalized:
+        return normalized
+
+    hospital_admins = list_users_by_role("hospital_admin")
+    if hospital_admins:
+        return (hospital_admins[0].get("hospital_id") or DEFAULT_HOSPITAL_ID).strip() or DEFAULT_HOSPITAL_ID
+
+    return DEFAULT_HOSPITAL_ID
+
+
 def register_user(payload: dict[str, Any]) -> dict[str, Any]:
     name = (payload.get("name") or "").strip()
     email = _validate_email(payload.get("email"))
     password = _validate_password(payload.get("password"))
     role = _validate_role(payload.get("role"))
     specialty = _validate_specialty(role, payload.get("specialty"))
-    hospital_id = (payload.get("hospital_id") or DEFAULT_HOSPITAL_ID).strip() or DEFAULT_HOSPITAL_ID
+    hospital_id = _resolve_hospital_id(payload.get("hospital_id"))
     patient_profile_fields = _validate_patient_profile_fields(role, payload)
 
     if not name:

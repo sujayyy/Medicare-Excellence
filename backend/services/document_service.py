@@ -107,10 +107,15 @@ def _derive_prescription_insights(
             "Prescription uploaded. Some text was detected, but medicine extraction confidence is low. "
             "Add clearer notes or typed prescription text for better results."
         )
+    elif extracted["ocr_status"] == "handwriting_ai_unavailable":
+        summary = (
+            "Prescription image uploaded successfully. This environment does not currently support strong handwriting reading, "
+            "so please add typed medicine names, dosage, or timing in the notes field for better extraction."
+        )
     elif file_name or content_type:
         summary = (
-            "Prescription uploaded. OCR text could not be extracted from the file in this environment. "
-            "Add typed prescription notes for medicine guidance."
+            "Prescription uploaded. Text could not be extracted reliably from this file in the current environment. "
+            "Add typed medicine notes for better guidance."
         )
     else:
         summary = "Prescription uploaded for clinician review."
