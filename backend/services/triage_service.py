@@ -21,7 +21,7 @@ RISK_PROTOTYPES = {
     },
     "Medium": {
         "prototype": (
-            "headache fever cough dizziness nausea abdominal pain rash back pain blood pressure fatigue "
+            "headache fever cough dizziness nausea abdominal pain acidity indigestion heartburn rash back pain blood pressure fatigue "
             "same day follow-up monitor symptoms"
         ),
         "recommended_action": "Monitor symptoms closely and consider a same-day appointment if they persist.",
@@ -58,6 +58,7 @@ HIGH_RISK_PHRASES = {
     "vomiting": 10,
     "blurred vision": 12,
     "weakness": 12,
+    "sudden headache": 18,
 }
 
 MEDIUM_RISK_PHRASES = {
@@ -67,6 +68,9 @@ MEDIUM_RISK_PHRASES = {
     "dizziness": 9,
     "nausea": 8,
     "abdominal pain": 10,
+    "acidity": 7,
+    "heartburn": 7,
+    "indigestion": 7,
     "rash": 7,
     "back pain": 7,
     "blood pressure": 9,
@@ -284,6 +288,10 @@ def assess_triage(
     if urgent_red_flags and score < 62:
         score = 62
         factors.append("Urgent red-flag symptoms prevent this case from being treated as low risk.")
+
+    if ("headache" in (entities.get("symptoms") or [])) and any(token in message for token in ["sudden", "suddenly"]):
+        score = max(score, 58)
+        factors.append("Sudden-onset headache needs closer same-day clinical review.")
 
     label = _label_from_score(score, appointment=appointment)
     confidence = min(0.99, 0.55 + (score / 160))

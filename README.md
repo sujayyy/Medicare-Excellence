@@ -19,7 +19,7 @@ AI-powered hospital coordination platform for patient triage, clinician review, 
 ### 1. Clone the repo
 
 ```powershell
-git clone <YOUR-NEW-REPO-URL> Medicare-Excellence
+git clone https://github.com/sujayyy/Medicare-Excellence.git
 cd Medicare-Excellence
 ```
 

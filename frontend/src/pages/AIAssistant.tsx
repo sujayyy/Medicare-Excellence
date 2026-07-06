@@ -11,10 +11,10 @@ import ReactMarkdown from "react-markdown";
 type Message = { role: "user" | "assistant"; content: string };
 
 const suggestions = [
-  "I have a persistent headache and fever",
-  "What are signs of heart disease?",
-  "Recommend a specialist for back pain",
-  "What should I do for high blood pressure?",
+  "I have a persistent headache and fever since yesterday",
+  "I just had spicy food and now I have acidity. What should I do?",
+  "I have chest pain and shortness of breath",
+  "Which doctor should I see for back pain?",
 ];
 export default function AIAssistant() {
   const { token } = useAuth();
@@ -71,7 +71,7 @@ export default function AIAssistant() {
             <Brain className="w-5 h-5 sm:w-6 sm:h-6 text-primary" /> AI Health Assistant
           </h1>
           <p className="text-muted-foreground font-body text-xs sm:text-sm">
-            Describe your symptoms for AI-powered guidance.
+            Share symptoms, duration, and severity for structured triage guidance.
           </p>
         </div>
 
@@ -83,7 +83,7 @@ export default function AIAssistant() {
                   <Sparkles className="w-7 h-7 sm:w-8 sm:h-8 text-primary-foreground" />
                 </div>
                 <h3 className="font-display font-semibold text-foreground mb-2">
-                  How can I help you today?
+                  How can I triage this for you?
                 </h3>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-md px-2">
@@ -151,7 +151,7 @@ export default function AIAssistant() {
               className="flex gap-2"
             >
               <Input
-                placeholder="Describe your symptoms..."
+                placeholder="Describe symptoms, how long they’ve been there, and how severe they feel..."
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
               />

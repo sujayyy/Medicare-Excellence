@@ -80,7 +80,7 @@
       "text": "I have abdominal pain and vomiting for 1 day",
       "expected_triage": "Medium",
       "predicted_triage": "Medium",
-      "triage_confidence": 0.85,
+      "triage_confidence": 0.84,
       "expected_specialty": "gastroenterology",
       "predicted_specialty": "gastroenterology",
       "specialty_reason": "Gastroenterology matched symptoms like abdominal pain, vomiting."

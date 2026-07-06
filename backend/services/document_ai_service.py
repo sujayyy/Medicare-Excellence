@@ -3,9 +3,12 @@ from __future__ import annotations
 import base64
 import io
 import json
+import logging
 import os
 import re
 from typing import Any, Optional
+
+import requests
 
 try:
     import google.generativeai as genai
@@ -22,6 +25,8 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     pytesseract = None
 
+
+logger = logging.getLogger(__name__)
 
 TIMING_KEYWORDS = [
     ("1-1-1", ["Morning", "Noon", "Night"]),
@@ -65,6 +70,64 @@ COMMON_MEDICATION_TOKENS = {
     "dolo",
     "crocin",
 }
+
+NON_MEDICATION_NOISE_TOKENS = {
+    "whatsapp",
+    "image",
+    "img",
+    "screenshot",
+    "photo",
+    "scan",
+    "camera",
+    "document",
+    "upload",
+    "uploaded",
+    "medications",
+    "medicine",
+    "lemme",
+    "know",
+}
+
+ROUTE_OR_INSTRUCTION_ONLY_TOKENS = {
+    "po",
+    "oral",
+    "orally",
+    "iv",
+    "im",
+    "sc",
+    "stat",
+    "sos",
+    "prn",
+    "tablet",
+    "tab",
+    "capsule",
+    "cap",
+    "syrup",
+    "dose",
+    "drug",
+    "medicine",
+    "medication",
+}
+
+MEDICATION_NAME_BLOCKLIST = {
+    "whatsapp",
+    "image",
+    "upload",
+    "uploaded",
+    "prescription",
+    "report",
+    "jpeg",
+    "jpg",
+    "png",
+    "document",
+    "medicine plan",
+    "medication plan",
+    "not specified",
+    "follow clinician instructions",
+}
+
+HF_DEFAULT_VISION_MODEL = "CohereLabs/aya-vision-32b:cohere"
+HF_DEFAULT_OCR_MODEL = "microsoft/trocr-base-handwritten"
 
 LAB_THRESHOLDS = {
     "glucose": {"high": 180, "critical": 250, "unit": "mg/dL", "label": "Glucose", "aliases": ["glucose", "blood sugar", "rbs", "fbs"]},
@@ -137,11 +200,29 @@ def _normalize_ai_medication_schedule(entries: Optional[list[dict[str, Any]]]) -
     seen = set()
 
     for entry in entries or []:
-        drug_name = " ".join(str(entry.get("drug_name") or "").split()).strip()
+        drug_name = " ".join(
+            str(
+                entry.get("drug_name")
+                or entry.get("medicine")
+                or entry.get("medication")
+                or entry.get("name")
+                or entry.get("drug")
+                or ""
+            ).split()
+        ).strip()
         if not drug_name:
             continue
 
         lowered_name = drug_name.lower()
+        name_words = _word_tokens(lowered_name)
+        if lowered_name in ROUTE_OR_INSTRUCTION_ONLY_TOKENS or lowered_name in MEDICATION_NAME_BLOCKLIST:
+            continue
+        if name_words and all(word in NON_MEDICATION_NOISE_TOKENS or word in ROUTE_OR_INSTRUCTION_ONLY_TOKENS for word in name_words):
+            continue
+        if name_words and any(word in MEDICATION_NAME_BLOCKLIST for word in name_words):
+            continue
+        if not any(re.search(r"[a-z]{3,}", word) for word in name_words):
+            continue
         if lowered_name in seen:
             continue
         seen.add(lowered_name)
@@ -150,13 +231,78 @@ def _normalize_ai_medication_schedule(entries: Optional[list[dict[str, Any]]]) -
             {
                 "drug_name": drug_name,
                 "dosage": " ".join(str(entry.get("dosage") or "Not specified").split()).strip() or "Not specified",
-                "timing": " ".join(str(entry.get("timing") or "Follow clinician instructions").split()).strip() or "Follow clinician instructions",
+                "timing": " ".join(str(entry.get("timing") or entry.get("frequency") or "Follow clinician instructions").split()).strip() or "Follow clinician instructions",
                 "duration": " ".join(str(entry.get("duration") or "Not specified").split()).strip() or "Not specified",
                 "source_line": " ".join(str(entry.get("notes") or entry.get("source_line") or "AI handwriting interpretation").split()).strip()[:180],
             }
         )
 
     return medications
+
+
+def _meaningful_value(value: str, *, placeholder: str = "Not specified") -> str:
+    cleaned = " ".join((value or "").split()).strip()
+    if not cleaned:
+        return ""
+    if cleaned.lower() == placeholder.lower():
+        return ""
+    return cleaned
+
+
+def _clean_medication_name(value: str) -> str:
+    cleaned = " ".join((value or "").split()).strip(" -:;,.")
+    cleaned = re.sub(r"^(rx|tab|tablet|cap|capsule|syrup|inj)\.?\s+", "", cleaned, flags=re.IGNORECASE)
+    return cleaned.strip()
+
+
+def _refine_medication_schedule(entries: list[dict[str, Any]]) -> list[dict[str, str]]:
+    refined: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    for entry in entries:
+        drug_name = _clean_medication_name(str(entry.get("drug_name") or ""))
+        lowered_name = drug_name.lower()
+        name_words = _word_tokens(lowered_name)
+        if not drug_name:
+            continue
+        if lowered_name in MEDICATION_NAME_BLOCKLIST:
+            continue
+        if name_words and any(word in MEDICATION_NAME_BLOCKLIST for word in name_words):
+            continue
+        if name_words and all(word in ROUTE_OR_INSTRUCTION_ONLY_TOKENS or word in NON_MEDICATION_NOISE_TOKENS for word in name_words):
+            continue
+        if lowered_name in seen:
+            continue
+
+        dosage = _meaningful_value(str(entry.get("dosage") or ""), placeholder="Not specified") or "Not specified"
+        timing = _meaningful_value(str(entry.get("timing") or entry.get("frequency") or ""), placeholder="Follow clinician instructions") or "Follow clinician instructions"
+        duration = _meaningful_value(str(entry.get("duration") or ""), placeholder="Not specified") or "Not specified"
+        source_line = " ".join(str(entry.get("source_line") or entry.get("notes") or "").split()).strip()[:180]
+
+        if dosage == "Not specified" and timing == "Follow clinician instructions" and duration == "Not specified":
+            if source_line:
+                dosage_match = DOSAGE_PATTERN.search(source_line)
+                if dosage_match:
+                    dosage = dosage_match.group(1)
+                derived_timing = _normalize_timing(source_line)
+                if derived_timing != "Follow clinician instructions":
+                    timing = derived_timing
+                derived_duration = _extract_duration(source_line)
+                if derived_duration != "Not specified":
+                    duration = derived_duration
+
+        refined.append(
+            {
+                "drug_name": drug_name,
+                "dosage": dosage,
+                "timing": timing,
+                "duration": duration,
+                "source_line": source_line,
+            }
+        )
+        seen.add(lowered_name)
+
+    return refined
 
 
 def _parse_json_response(raw_text: str) -> dict[str, Any]:
@@ -180,7 +326,63 @@ def _parse_json_response(raw_text: str) -> dict[str, Any]:
         return {}
 
 
+def _log_hf_failure(label: str, exc: Exception) -> None:
+    response = getattr(exc, "response", None)
+    if response is not None:
+        response_text = getattr(response, "text", "") or ""
+        logger.warning(
+            "%s failed with status %s: %s",
+            label,
+            getattr(response, "status_code", "unknown"),
+            response_text[:500],
+        )
+        return
+    logger.warning("%s failed: %s", label, exc)
+
+
+def _has_word_or_phrase(text: str, phrase: str) -> bool:
+    if not text or not phrase:
+        return False
+    escaped = re.escape(phrase).replace(r"\ ", r"\s+")
+    return re.search(rf"(?<![A-Za-z0-9]){escaped}(?![A-Za-z0-9])", text, re.IGNORECASE) is not None
+
+
+def _has_timing_keyword(text: str, keyword: str) -> bool:
+    return _has_word_or_phrase(text, keyword)
+
+
+def _word_tokens(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+(?:-[a-z0-9]+)?", (text or "").lower())
+
+
 def _extract_multimodal_prescription(
+    *,
+    file_bytes: bytes,
+    content_type: str,
+    file_name: str,
+    notes: str,
+) -> dict[str, Any]:
+    huggingface_result = _extract_huggingface_prescription(
+        file_bytes=file_bytes,
+        content_type=content_type,
+        file_name=file_name,
+        notes=notes,
+    )
+    if huggingface_result:
+        return huggingface_result
+
+    gemini_result = _extract_gemini_prescription(
+        file_bytes=file_bytes,
+        content_type=content_type,
+        file_name=file_name,
+        notes=notes,
+    )
+    if gemini_result:
+        return gemini_result
+    return {}
+
+
+def _extract_gemini_prescription(
     *,
     file_bytes: bytes,
     content_type: str,
@@ -220,13 +422,14 @@ Rules:
 - use empty strings when unsure
 - timing should be patient-friendly if possible, for example "Morning, Night after food"
 - do not invent medicines with high confidence if handwriting is unreadable
+- return only real medicine entries, never file names, prompt text, or sentence fragments
+- if the medicine name is not readable, leave that item out instead of guessing
 - if only part of the prescription is readable, return the readable part
                 """,
                 {
                     "mime_type": content_type or "image/jpeg",
                     "data": file_bytes,
                 },
-                f"Document name: {file_name or 'prescription'}\nUploader notes: {notes or 'none'}",
             ]
         )
         parsed = _parse_json_response(getattr(response, "text", "") or "")
@@ -247,12 +450,174 @@ Rules:
             "ocr_source": "multimodal_ai_image",
             "extraction_model": "multimodal-prescription-ai-v2",
         }
-    except Exception:
+    except Exception as exc:
+        logger.warning("Gemini prescription extraction failed: %s", exc)
+        return {}
+
+
+def _parse_hf_generated_text(payload: Any) -> str:
+    if isinstance(payload, list):
+        candidates = payload
+    elif isinstance(payload, dict):
+        candidates = [payload]
+    else:
+        return ""
+
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        generated = item.get("generated_text") or item.get("text")
+        if generated:
+            return " ".join(str(generated).split()).strip()
+    return ""
+
+
+def _extract_huggingface_ocr_text(
+    *,
+    file_bytes: bytes,
+    content_type: str,
+) -> dict[str, Any]:
+    token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACEHUB_API_TOKEN")
+    if not token or not file_bytes:
+        return {}
+
+    model = os.getenv("HF_OCR_MODEL", HF_DEFAULT_OCR_MODEL)
+    try:
+        response = requests.post(
+            f"https://router.huggingface.co/hf-inference/models/{model}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": content_type or "image/jpeg",
+            },
+            data=file_bytes,
+            timeout=45,
+        )
+        response.raise_for_status()
+        extracted_text = _parse_hf_generated_text(response.json())
+        if not extracted_text:
+            return {}
+
+        return {
+            "extracted_text": extracted_text,
+            "medication_schedule": [],
+            "ai_interpretation_notes": "Handwriting OCR was attempted. Please verify medication names and doses before use.",
+            "document_quality": "moderate",
+            "ocr_status": "ocr_extracted",
+            "ocr_source": "huggingface_ocr",
+            "extraction_model": f"huggingface:{model}",
+        }
+    except Exception as exc:
+        _log_hf_failure("Hugging Face OCR extraction", exc)
+        return {}
+
+
+def _extract_huggingface_prescription(
+    *,
+    file_bytes: bytes,
+    content_type: str,
+    file_name: str,
+    notes: str,
+) -> dict[str, Any]:
+    token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACEHUB_API_TOKEN")
+    if not token or not file_bytes:
+        return {}
+
+    mime_type = content_type or "image/jpeg"
+    model = os.getenv("HF_VISION_MODEL", HF_DEFAULT_VISION_MODEL)
+    data_url = f"data:{mime_type};base64,{base64.b64encode(file_bytes).decode('utf-8')}"
+    prompt = """
+You are reading a real doctor prescription image for a healthcare app.
+
+Return strict JSON only with this shape:
+{
+  "extracted_text": "clean readable transcription of the prescription",
+  "medications": [
+    {
+      "drug_name": "",
+      "dosage": "",
+      "timing": "",
+      "duration": "",
+      "notes": ""
+    }
+  ],
+  "interpretation_notes": "short note about ambiguous handwriting or instructions",
+  "document_quality": "clear | moderate | poor"
+}
+
+Rules:
+- read handwritten prescriptions as carefully as possible
+- use empty strings when unsure
+- timing should be patient-friendly if possible
+- do not invent medicines with high confidence if handwriting is unreadable
+- if the image is blank, unclear, or not a prescription, return extracted_text as "" and medications as []
+- never use file names, upload notes, or generic words like image/upload/medicine as drug names
+- never output sentence fragments as drug names
+- if a medicine name is unreadable, skip that medicine instead of guessing
+- if only part of the prescription is readable, return the readable part
+""".strip()
+
+    try:
+        response = requests.post(
+            "https://router.huggingface.co/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "temperature": 0.1,
+                "max_tokens": 900,
+                "messages": [
+                    {"role": "system", "content": "You extract readable medication instructions from handwritten clinical prescriptions."},
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": data_url}},
+                        ],
+                    },
+                ],
+            },
+            timeout=45,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        raw_content = (
+            (((payload.get("choices") or [{}])[0]).get("message") or {}).get("content")
+            if isinstance(payload, dict)
+            else ""
+        )
+        if isinstance(raw_content, list):
+            raw_content = "".join(
+                part.get("text", "")
+                for part in raw_content
+                if isinstance(part, dict) and part.get("type") in {"text", "output_text"}
+            )
+        parsed = _parse_json_response(raw_content or "")
+        medications = _normalize_ai_medication_schedule(parsed.get("medications"))
+        extracted_text = " ".join(str(parsed.get("extracted_text") or "").split()).strip()
+        interpretation_notes = " ".join(str(parsed.get("interpretation_notes") or "").split()).strip()
+        document_quality = " ".join(str(parsed.get("document_quality") or "").split()).strip().lower()
+
+        if not extracted_text and not medications and not interpretation_notes:
+            return {}
+
+        return {
+            "extracted_text": extracted_text,
+            "medication_schedule": medications,
+            "ai_interpretation_notes": interpretation_notes,
+            "document_quality": document_quality or "moderate",
+            "ocr_status": "ai_handwriting_interpreted",
+            "ocr_source": "huggingface_multimodal_image",
+            "extraction_model": f"huggingface:{model}",
+        }
+    except Exception as exc:
+        _log_hf_failure("Hugging Face multimodal prescription extraction", exc)
         return {}
 
 
 def _handwriting_ai_available() -> bool:
-    return bool(os.getenv("GEMINI_API_KEY") and genai is not None)
+    return bool((os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACEHUB_API_TOKEN")) or (os.getenv("GEMINI_API_KEY") and genai is not None))
 
 
 def _local_ocr_available() -> bool:
@@ -268,12 +633,13 @@ def extract_document_text(
     file_data_url: str = "",
 ) -> dict[str, Any]:
     file_bytes, header = _decode_data_url(file_data_url)
+    is_image = _looks_like_image(file_name, content_type, header)
     ocr_text = ""
     ocr_status = "not_attempted"
     ocr_source = "manual_text"
     multimodal_result: dict[str, Any] = {}
 
-    if _looks_like_image(file_name, content_type, header):
+    if is_image:
         multimodal_result = _extract_multimodal_prescription(
             file_bytes=file_bytes,
             content_type=content_type,
@@ -299,7 +665,11 @@ def extract_document_text(
             extracted_text = multimodal_result["extracted_text"].strip()
             ocr_status = multimodal_result.get("ocr_status", "ai_handwriting_interpreted")
             ocr_source = multimodal_result.get("ocr_source", "multimodal_ai_image")
-        elif _looks_like_image(file_name, content_type, header):
+        elif multimodal_result.get("medication_schedule"):
+            extracted_text = ""
+            ocr_status = multimodal_result.get("ocr_status", "ai_handwriting_interpreted")
+            ocr_source = multimodal_result.get("ocr_source", "multimodal_ai_image")
+        elif is_image:
             ocr_text = _extract_image_text(file_bytes).strip()
             if ocr_text:
                 extracted_text = ocr_text
@@ -313,15 +683,25 @@ def extract_document_text(
             extracted_text = ""
             ocr_status = "no_text_detected"
 
-    combined_text = "\n".join(part for part in [notes.strip(), extracted_text.strip(), file_name.strip()] if part).strip()
-    excerpt = extracted_text[:280] if extracted_text else combined_text[:280]
-    if _looks_like_image(file_name, content_type, header) and not extracted_text.strip():
+    combined_parts = [notes.strip(), extracted_text.strip()]
+    if not is_image:
+        combined_parts.append(file_name.strip())
+    combined_text = "\n".join(part for part in combined_parts if part).strip()
+    excerpt = extracted_text[:280] if extracted_text else ""
+    if is_image and not extracted_text.strip() and not multimodal_result.get("medication_schedule"):
         if not _handwriting_ai_available() and not _local_ocr_available():
             ocr_status = "handwriting_ai_unavailable"
             ocr_source = "image_upload"
         elif not _handwriting_ai_available() and _local_ocr_available():
             ocr_status = "ocr_unavailable"
             ocr_source = "image_upload"
+        elif _handwriting_ai_available():
+            ocr_status = "handwriting_ai_failed"
+            ocr_source = "ai_image_upload"
+
+    extraction_model = multimodal_result.get("extraction_model", "")
+    if not extraction_model and is_image and _handwriting_ai_available():
+        extraction_model = f"huggingface:{os.getenv('HF_OCR_MODEL', HF_DEFAULT_OCR_MODEL)}"
 
     return {
         "combined_text": combined_text,
@@ -329,7 +709,7 @@ def extract_document_text(
         "ocr_status": ocr_status,
         "ocr_source": ocr_source,
         "ocr_text_excerpt": excerpt,
-        "extraction_model": multimodal_result.get("extraction_model", "ocr-nlp-prescription-v1"),
+        "extraction_model": extraction_model or "ocr-nlp-prescription-v1",
         "medication_schedule": multimodal_result.get("medication_schedule", []),
         "ai_interpretation_notes": multimodal_result.get("ai_interpretation_notes", ""),
         "document_quality": multimodal_result.get("document_quality", ""),
@@ -341,7 +721,7 @@ def _normalize_timing(raw_text: str) -> str:
     times: list[str] = []
 
     for keyword, labels in TIMING_KEYWORDS:
-        if keyword in lowered:
+        if _has_timing_keyword(lowered, keyword):
             for label in labels:
                 if label not in times:
                     times.append(label)
@@ -353,7 +733,7 @@ def _normalize_timing(raw_text: str) -> str:
         ("evening", "Evening"),
         ("night", "Night"),
     ]:
-        if keyword in lowered and label not in times:
+        if _has_word_or_phrase(lowered, keyword) and label not in times:
             times.append(label)
 
     qualifiers = []
@@ -402,6 +782,33 @@ def _extract_drug_name(raw_text: str) -> str:
     return " ".join(tokens)
 
 
+def _looks_like_prescription_line(raw_text: str) -> bool:
+    lowered = (raw_text or "").lower().strip()
+    if not lowered:
+        return False
+
+    compact_words = _word_tokens(lowered)
+    if compact_words and all(word in NON_MEDICATION_NOISE_TOKENS or word.isdigit() for word in compact_words):
+        return False
+
+    if MED_NAME_PREFIXES.search(lowered):
+        return True
+
+    if DOSAGE_PATTERN.search(lowered):
+        return True
+
+    if any(_has_timing_keyword(lowered, keyword) for keyword, _labels in TIMING_KEYWORDS):
+        return True
+
+    if any(_has_word_or_phrase(lowered, word) for word in ("morning", "noon", "night", "before food", "after food", "bd", "tid", "tds", "od", "hs")):
+        return True
+
+    if any(token in compact_words for token in COMMON_MEDICATION_TOKENS):
+        return True
+
+    return False
+
+
 def extract_prescription_entities(
     document_text: str,
     *,
@@ -413,6 +820,8 @@ def extract_prescription_entities(
     seen = {entry["drug_name"].lower() for entry in medications}
 
     for line in lines:
+        if not _looks_like_prescription_line(line):
+            continue
         drug_name = _extract_drug_name(line)
         if not drug_name:
             continue
@@ -442,7 +851,7 @@ def extract_prescription_entities(
         confidence = 0.38
 
     return {
-        "medication_schedule": medications,
+        "medication_schedule": _refine_medication_schedule(medications),
         "extraction_confidence": round(confidence, 2),
         "ai_interpretation_notes": ai_interpretation_notes,
     }

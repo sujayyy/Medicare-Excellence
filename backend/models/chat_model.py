@@ -8,6 +8,11 @@ def _collection():
     return get_database()["chats"]
 
 
+def _user_id_value(user: dict[str, Any]) -> Optional[str]:
+    raw_id = user.get("id") or user.get("_id")
+    return str(raw_id) if raw_id is not None else None
+
+
 def ensure_chat_indexes() -> None:
     _collection().create_index("user_id", unique=True, sparse=True)
     _collection().create_index("hospital_id")
@@ -22,6 +27,9 @@ def append_chat_messages(
     entities: Optional[dict[str, Any]] = None,
 ) -> Optional[dict[str, Any]]:
     if not user:
+        return None
+    user_id = _user_id_value(user)
+    if not user_id:
         return None
 
     now = utc_now()
@@ -42,15 +50,14 @@ def append_chat_messages(
         set_fields["latest_entities"] = entities
 
     _collection().update_one(
-        {"user_id": user["id"]},
+        {"user_id": user_id},
         {
             "$setOnInsert": {
                 "created_at": now,
-                "user_id": user["id"],
+                "user_id": user_id,
                 "user_name": user["name"],
                 "user_email": user["email"],
                 "role": user["role"],
-                "hospital_id": user.get("hospital_id"),
             },
             "$set": set_fields,
             "$push": {"messages": {"$each": sanitized_messages}},
@@ -58,7 +65,7 @@ def append_chat_messages(
         upsert=True,
     )
 
-    return get_chat_by_user_id(user["id"])
+    return get_chat_by_user_id(user_id)
 
 
 def get_chat_by_user_id(user_id: str) -> Optional[dict[str, Any]]:

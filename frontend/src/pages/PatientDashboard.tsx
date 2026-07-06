@@ -118,13 +118,40 @@ function getMessageIdentity(message: ChatMessage) {
   return `${message.role}::${message.content}::${message.created_at || ""}`;
 }
 
+function normalizeMessageContent(content: string) {
+  return (content || "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function areMessagesNearDuplicates(left: ChatMessage, right: ChatMessage) {
+  if (left.role !== right.role) {
+    return false;
+  }
+
+  if (normalizeMessageContent(left.content) !== normalizeMessageContent(right.content)) {
+    return false;
+  }
+
+  if (!left.created_at || !right.created_at) {
+    return true;
+  }
+
+  const leftTime = new Date(left.created_at).getTime();
+  const rightTime = new Date(right.created_at).getTime();
+  if (Number.isNaN(leftTime) || Number.isNaN(rightTime)) {
+    return true;
+  }
+
+  return Math.abs(leftTime - rightTime) <= 15000;
+}
+
 function mergeMessages(current: ChatMessage[], incoming: ChatMessage[]) {
   const merged = [...current];
   const known = new Set(current.map(getMessageIdentity));
 
   for (const message of incoming) {
     const identity = getMessageIdentity(message);
-    if (!known.has(identity)) {
+    const alreadyPresent = merged.some((existing) => areMessagesNearDuplicates(existing, message));
+    if (!known.has(identity) && !alreadyPresent) {
       merged.push(message);
       known.add(identity);
     }
@@ -144,6 +171,14 @@ function formatFileSize(size?: number) {
     return `${Math.round(size / 1024)} KB`;
   }
   return `${size} B`;
+}
+
+function buildDocumentTitleFromFile(file: File, documentType: string) {
+  const baseName = file.name.replace(/\.[^/.]+$/, "").replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+  if (baseName) {
+    return baseName;
+  }
+  return documentType.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 function inferDocumentType(file: File | null) {
@@ -167,6 +202,86 @@ function inferDocumentType(file: File | null) {
   return "other";
 }
 
+const medicationNoiseNames = new Set([
+  "whatsapp",
+  "whatsapp image",
+  "image",
+  "screenshot",
+  "photo",
+  "upload",
+  "uploaded",
+  "prescription",
+  "medicine",
+  "medications",
+  "lemme",
+  "lemme know",
+  "lemme know the",
+]);
+
+const commonMedicationNames = new Set([
+  "paracetamol",
+  "acetaminophen",
+  "ibuprofen",
+  "aspirin",
+  "amoxicillin",
+  "metformin",
+  "insulin",
+  "omeprazole",
+  "cetirizine",
+  "thyroxine",
+  "amlodipine",
+  "losartan",
+  "atorvastatin",
+  "pantoprazole",
+  "azithromycin",
+  "dolo",
+  "crocin",
+]);
+
+function hasMeaningfulMedicationValue(value?: string, emptyFallback = "not specified") {
+  const normalized = (value || "").trim().toLowerCase();
+  return Boolean(normalized && normalized !== emptyFallback && normalized !== "follow clinician instructions");
+}
+
+function isReliableMedicationEntry(entry: NonNullable<DocumentRecord["medication_schedule"]>[number]) {
+  const normalizedName = (entry.drug_name || "").trim().toLowerCase().replace(/\s+/g, " ");
+  if (!normalizedName || medicationNoiseNames.has(normalizedName)) {
+    return false;
+  }
+
+  const words = normalizedName.split(/\s+/);
+  if (words.every((word) => medicationNoiseNames.has(word) || /^\d+$/.test(word))) {
+    return false;
+  }
+
+  if (commonMedicationNames.has(normalizedName) || words.some((word) => commonMedicationNames.has(word))) {
+    return true;
+  }
+
+  return hasMeaningfulMedicationValue(entry.dosage) || hasMeaningfulMedicationValue(entry.timing, "follow clinician instructions");
+}
+
+function getReliableMedicationSchedule(document: DocumentRecord) {
+  return (document.medication_schedule || []).filter(isReliableMedicationEntry);
+}
+
+function formatMedicationField(value?: string, fallback = "Not clearly identified") {
+  const trimmed = (value || "").trim();
+  return trimmed && trimmed.toLowerCase() !== "not specified" ? trimmed : fallback;
+}
+
+function getDocumentDisplaySummary(document: DocumentRecord) {
+  if (
+    document.document_type === "prescription" &&
+    (document.medication_schedule?.length || 0) > 0 &&
+    getReliableMedicationSchedule(document).length === 0
+  ) {
+    return "Prescription uploaded. No reliable medicine names, dosage, or timing were extracted from this upload yet.";
+  }
+
+  return document.summary || "No document summary available yet.";
+}
+
 function readFileAsDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -177,16 +292,21 @@ function readFileAsDataUrl(file: File) {
 }
 
 function buildDocumentAssistantReply(document: DocumentRecord) {
-  if (document.document_type === "prescription" && (document.medication_schedule?.length || 0) > 0) {
-    const medications = (document.medication_schedule || [])
-      .map((entry) => `- ${entry.drug_name}: ${entry.dosage} · ${entry.timing}${entry.duration ? ` · ${entry.duration}` : ""}`)
+  const reliableMedicationSchedule = getReliableMedicationSchedule(document);
+
+  if (document.document_type === "prescription" && reliableMedicationSchedule.length > 0) {
+    const medications = reliableMedicationSchedule
+      .map(
+        (entry, index) =>
+          `${index + 1}. **${formatMedicationField(entry.drug_name)}**\n   - Dosage: ${formatMedicationField(entry.dosage)}\n   - Timing: ${formatMedicationField(entry.timing, "Check with the doctor or pharmacist")}${entry.duration && entry.duration !== "Not specified" ? `\n   - Duration: ${entry.duration}` : ""}`,
+      )
       .join("\n");
     const modeNote =
       document.ocr_status === "ai_handwriting_interpreted"
         ? "I reviewed the uploaded prescription image and extracted this medicine plan:"
         : "I reviewed the uploaded prescription details and extracted this medicine plan:";
     const interpretationNote = document.ai_interpretation_notes ? `\n\nNote: ${document.ai_interpretation_notes}` : "";
-    return `${modeNote}\n\n${medications}${interpretationNote}\n\nPlease confirm the drug name, dosage, and timing with your doctor or pharmacist before following it.`;
+    return `**Medicine Summary**\n\n${modeNote}\n\n${medications}${interpretationNote}\n\nPlease confirm each medicine name, dosage, and timing with your doctor or pharmacist before following it.`;
   }
 
   if (document.document_type === "prescription") {
@@ -201,6 +321,14 @@ function buildDocumentAssistantReply(document: DocumentRecord) {
 
 function getMessageSpeakId(message: ChatMessage, index: number) {
   return `${message.role}-${index}-${message.created_at || ""}`;
+}
+
+function getStructuredRiskLabel(content: string) {
+  const match = content.match(/\*\*Risk Level\*\*[\s\S]*?-\s*(HIGH|MODERATE|LOW)\s*\((Critical|High|Medium|Low)\)/i);
+  if (!match) {
+    return "";
+  }
+  return `${match[1].toUpperCase()} (${match[2]})`;
 }
 
 function getAssistantMessageMeta(content: string) {
@@ -226,6 +354,22 @@ function getAssistantMessageMeta(content: string) {
       variant: "emergency" as const,
       title: "Urgent Guidance",
       detail: "Needs faster attention",
+    };
+  }
+
+  if (content.includes("**Symptoms Summary**") && content.includes("**Risk Level**")) {
+    const riskLabel = getStructuredRiskLabel(content);
+    const isHighRisk = /HIGH\s*\((Critical|High)\)/i.test(riskLabel);
+    const isModerateRisk = /MODERATE\s*\(Medium\)/i.test(riskLabel);
+
+    return {
+      variant: isHighRisk ? ("triage-high" as const) : ("triage-routine" as const),
+      title: isHighRisk ? "Priority Triage" : "Medical Triage",
+      detail: isHighRisk
+        ? riskLabel || "Higher-risk symptoms detected"
+        : isModerateRisk
+          ? riskLabel || "Moderate-risk guidance prepared"
+          : riskLabel || "Structured symptom guidance",
     };
   }
 
@@ -409,6 +553,7 @@ export default function PatientDashboard() {
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
   const historyHydratedRef = useRef(false);
   const lastAutoSpokenMessageRef = useRef("");
+  const sendInFlightRef = useRef(false);
 
   const historyQuery = useQuery({
     queryKey: ["chat-history", user?.id],
@@ -432,9 +577,6 @@ export default function PatientDashboard() {
     mutationFn: async () => {
       if (!token) {
         throw new ApiError("Please log in again to upload documents.", 401);
-      }
-      if (!documentTitle.trim()) {
-        throw new ApiError("Document title is required.", 400);
       }
       if (!selectedFile && !documentNotes.trim()) {
         throw new ApiError("Add a file or paste prescription/report notes before uploading.", 400);
@@ -849,10 +991,11 @@ export default function PatientDashboard() {
 
   async function handleSend(rawText: string) {
     const text = rawText.trim();
-    if ((!text && !selectedFile) || !token || isSending) {
+    if ((!text && !selectedFile) || !token || isSending || sendInFlightRef.current) {
       return;
     }
 
+    sendInFlightRef.current = true;
     const nowIso = new Date().toISOString();
     const outgoingMessages: ChatMessage[] = [];
     if (text) {
@@ -926,6 +1069,7 @@ export default function PatientDashboard() {
         },
       ]);
     } finally {
+      sendInFlightRef.current = false;
       setIsSending(false);
       requestAnimationFrame(() => composerTextareaRef.current?.focus());
     }
@@ -1699,7 +1843,7 @@ export default function PatientDashboard() {
                         <Input
                           value={documentTitle}
                           onChange={(event) => setDocumentTitle(event.target.value)}
-                          placeholder="Document title, e.g. CBC Lab Report"
+                          placeholder="Optional title, e.g. CBC Lab Report"
                           disabled={uploadMutation.isPending}
                           className="border-border/60 bg-background/90"
                         />
@@ -1726,7 +1870,13 @@ export default function PatientDashboard() {
                           ref={documentUploadInputRef}
                           type="file"
                           disabled={uploadMutation.isPending}
-                          onChange={(event) => setSelectedFile(event.target.files?.[0] || null)}
+                          onChange={(event) => {
+                            const file = event.target.files?.[0] || null;
+                            setSelectedFile(file);
+                            if (file && !documentTitle.trim()) {
+                              setDocumentTitle(buildDocumentTitleFromFile(file, documentType));
+                            }
+                          }}
                           className="block w-full text-sm text-muted-foreground file:mr-4 file:rounded-md file:border-0 file:bg-accent file:px-3 file:py-2 file:text-sm file:font-medium"
                         />
                         {selectedFile && (
@@ -1744,7 +1894,7 @@ export default function PatientDashboard() {
                         )}
                         <Button
                           variant="hero"
-                          disabled={uploadMutation.isPending || !documentTitle.trim() || (!selectedFile && !documentNotes.trim())}
+                          disabled={uploadMutation.isPending || (!selectedFile && !documentNotes.trim())}
                           onClick={() => {
                             setDocumentError("");
                             uploadMutation.mutate();
@@ -1789,7 +1939,7 @@ export default function PatientDashboard() {
                               </Badge>
                             </div>
                           </div>
-                          <p className="text-sm text-foreground">{document.summary || "No document summary available yet."}</p>
+                          <p className="text-sm text-foreground">{getDocumentDisplaySummary(document)}</p>
                           {document.document_type === "lab_report" && (
                             <div className="mt-3 rounded-2xl border border-border/60 bg-background/80 px-3 py-3">
                               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1834,44 +1984,57 @@ export default function PatientDashboard() {
                               )}
                             </div>
                           )}
-                          {document.document_type === "prescription" && (document.medication_schedule?.length || 0) > 0 && (
-                            <div className="mt-3 space-y-2 rounded-2xl bg-accent/40 p-3">
+                          {document.document_type === "prescription" && getReliableMedicationSchedule(document).length > 0 && (
+                            <div className="mt-3 space-y-3 rounded-2xl border border-border/60 bg-accent/35 p-4">
                               <div className="flex flex-wrap items-center justify-between gap-2">
-                                <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Medication schedule</p>
-                                <p className="text-xs text-muted-foreground">
-                                  Confidence: {Math.round((document.extraction_confidence || 0) * 100)}%
-                                </p>
-                              </div>
-                              {(document.medication_schedule || []).map((entry) => (
-                                <div key={`${document.id}-${entry.drug_name}`} className="rounded-xl border border-border/60 bg-background px-3 py-2">
-                                  <p className="text-sm font-medium text-foreground">{entry.drug_name}</p>
-                                  <p className="text-xs text-muted-foreground">
-                                    Dosage: {entry.dosage} · Timing: {entry.timing}{entry.duration ? ` · Duration: ${entry.duration}` : ""}
+                                <div>
+                                  <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Medicine summary</p>
+                                  <p className="mt-1 text-sm font-medium text-foreground">
+                                    {getReliableMedicationSchedule(document).length} medicine{getReliableMedicationSchedule(document).length > 1 ? "s" : ""} identified
                                   </p>
                                 </div>
+                                <Badge variant="secondary">
+                                  {Math.round((document.extraction_confidence || 0) * 100)}% confidence
+                                </Badge>
+                              </div>
+                              {getReliableMedicationSchedule(document).map((entry) => (
+                                <div key={`${document.id}-${entry.drug_name}`} className="rounded-xl border border-border/60 bg-background px-4 py-3">
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <p className="text-sm font-semibold text-foreground">{formatMedicationField(entry.drug_name)}</p>
+                                    <Badge variant="outline">Medicine</Badge>
+                                  </div>
+                                  <div className="mt-2 grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+                                    <p><span className="font-medium text-foreground">Dosage:</span> {formatMedicationField(entry.dosage)}</p>
+                                    <p><span className="font-medium text-foreground">Timing:</span> {formatMedicationField(entry.timing, "Check with the doctor or pharmacist")}</p>
+                                    {entry.duration && entry.duration !== "Not specified" && <p>Duration: {entry.duration}</p>}
+                                  </div>
+                                </div>
                               ))}
+                              <p className="text-xs leading-5 text-muted-foreground">
+                                Please confirm the final medicine name, dosage, and timing with your doctor or pharmacist before taking it.
+                              </p>
                             </div>
                           )}
                           {document.document_type === "prescription" && (
                             <div className="mt-3 rounded-2xl border border-border/60 bg-background/80 px-3 py-3">
-                              <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Extraction details</p>
-                              <p className="mt-1 text-sm text-foreground">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Extraction status</p>
+                                <Badge variant={getReliableMedicationSchedule(document).length > 0 ? "secondary" : "outline"}>
+                                  {getReliableMedicationSchedule(document).length > 0 ? "Medicines extracted" : "Needs clearer details"}
+                                </Badge>
+                              </div>
+                              <p className="mt-2 text-sm text-foreground">
                                 Source: {document.ocr_source ? document.ocr_source.replace(/_/g, " ") : "manual text"} · Status:{" "}
                                 {document.ocr_status ? document.ocr_status.replace(/_/g, " ") : "not available"}
                               </p>
-                              {document.ocr_status === "handwriting_ai_unavailable" && (
+                              {(document.ocr_status === "handwriting_ai_unavailable" || document.ocr_status === "handwriting_ai_failed" || getReliableMedicationSchedule(document).length === 0) && (
                                 <p className="mt-2 text-sm text-foreground">
-                                  Tip: add typed medicine details in the notes field next time for stronger extraction on this system.
+                                  Tip: upload a clearer prescription image or add typed medicine names, dose, and timing in the notes field.
                                 </p>
                               )}
                               {document.ai_interpretation_notes && (
                                 <p className="mt-2 text-sm text-foreground">
                                   AI interpretation note: {document.ai_interpretation_notes}
-                                </p>
-                              )}
-                              {document.ocr_text_excerpt && (
-                                <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                                  Text preview: {document.ocr_text_excerpt}
                                 </p>
                               )}
                               {document.extraction_model && (

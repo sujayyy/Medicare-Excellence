@@ -31,6 +31,22 @@ def _safe_file_name(file_name: str) -> str:
     return cleaned[:120] or "document"
 
 
+def _fallback_document_title(*, title: str, file_name: str, document_type: str) -> str:
+    cleaned_title = (title or "").strip()
+    if cleaned_title:
+        return cleaned_title
+
+    stem = os.path.splitext((file_name or "").strip())[0].strip()
+    if stem:
+        stem = re.sub(r"[_-]+", " ", stem)
+        stem = re.sub(r"\s+", " ", stem).strip()
+        if stem:
+            return stem[:120]
+
+    label = (document_type or "document").replace("_", " ").title()
+    return f"{label} Upload"
+
+
 def _save_file_data(file_name: str, file_data_url: str, content_type: str = "") -> tuple[str, str, int]:
     if not file_data_url:
         return "", "", 0
@@ -86,9 +102,17 @@ def _derive_prescription_insights(
         content_type=content_type,
         file_data_url=file_data_url,
     )
+    analysis_text = "\n".join(
+        part
+        for part in [
+            extracted.get("extracted_text", "").strip(),
+            notes.strip(),
+        ]
+        if part
+    ).strip()
     entities = extract_clinical_document_entities(
         document_type="prescription",
-        document_text=extracted["combined_text"],
+        document_text=analysis_text,
         ai_medication_schedule=extracted.get("medication_schedule"),
         ai_interpretation_notes=extracted.get("ai_interpretation_notes", ""),
     )
@@ -96,21 +120,28 @@ def _derive_prescription_insights(
     extracted_tags = [item["drug_name"].lower() for item in medication_schedule[:6]] or ["prescription"]
 
     if medication_schedule:
-        meds_text = ", ".join(
-            f"{item['drug_name']} ({item['dosage']}, {item['timing']}, {item['duration']})"
+        formatted_lines = [
+            f"{item['drug_name']}: {item['dosage']} | {item['timing']}"
+            f"{' | ' + item['duration'] if item.get('duration') and item['duration'] != 'Not specified' else ''}"
             for item in medication_schedule[:4]
-        )
+        ]
+        meds_text = "; ".join(formatted_lines)
         source_hint = "AI handwriting interpretation" if extracted["ocr_status"] == "ai_handwriting_interpreted" else "OCR" if extracted["ocr_status"] == "ocr_extracted" else "text analysis"
-        summary = f"Prescription reviewed with {source_hint}. Medicines identified: {meds_text}."
-    elif extracted["combined_text"]:
+        summary = f"Prescription reviewed with {source_hint}. Medicine plan extracted: {meds_text}."
+    elif extracted["extracted_text"]:
         summary = (
-            "Prescription uploaded. Some text was detected, but medicine extraction confidence is low. "
-            "Add clearer notes or typed prescription text for better results."
+            "Prescription uploaded. Some text was detected, but clear medicine names, dose, or timing could not be extracted reliably yet. "
+            "Add typed medicine notes or upload a clearer prescription image."
         )
     elif extracted["ocr_status"] == "handwriting_ai_unavailable":
         summary = (
             "Prescription image uploaded successfully. This environment does not currently support strong handwriting reading, "
             "so please add typed medicine names, dosage, or timing in the notes field for better extraction."
+        )
+    elif extracted["ocr_status"] == "handwriting_ai_failed":
+        summary = (
+            "Prescription image uploaded successfully. AI handwriting reading was attempted, but no reliable medication text "
+            "was returned. Please upload a clearer image or add typed medicine notes for better extraction."
         )
     elif file_name or content_type:
         summary = (
@@ -248,7 +279,11 @@ def create_patient_document(payload: dict[str, Any], user: dict[str, Any]) -> di
     if user.get("role") != "patient":
         raise ValidationError("Only patients can upload documents.")
 
-    title = (payload.get("title") or "").strip()
+    title = _fallback_document_title(
+        title=(payload.get("title") or "").strip(),
+        file_name=(payload.get("file_name") or "").strip(),
+        document_type=_normalize_document_type(payload.get("document_type") or "other"),
+    )
     notes = (payload.get("notes") or "").strip()
     file_name = (payload.get("file_name") or "").strip()
     content_type = (payload.get("content_type") or "").strip()
@@ -256,9 +291,6 @@ def create_patient_document(payload: dict[str, Any], user: dict[str, Any]) -> di
     file_data_url = (payload.get("file_data_url") or "").strip()
     document_type = _normalize_document_type(payload.get("document_type") or "other")
     file_size = int(payload.get("file_size") or 0)
-
-    if not title:
-      raise ValidationError("Document title is required.")
 
     storage_key = ""
     storage_gridfs_file_id = ""
@@ -367,7 +399,11 @@ def create_clinician_document(payload: dict[str, Any], user: dict[str, Any]) -> 
     if user.get("role") == "doctor" and appointment.get("assigned_doctor_id") != str(user["_id"]):
         raise ValidationError("You can only attach records to your own appointments.")
 
-    title = (payload.get("title") or "").strip()
+    title = _fallback_document_title(
+        title=(payload.get("title") or "").strip(),
+        file_name=(payload.get("file_name") or "").strip(),
+        document_type=_normalize_document_type(payload.get("document_type") or "other"),
+    )
     notes = (payload.get("notes") or "").strip()
     file_name = (payload.get("file_name") or "").strip()
     content_type = (payload.get("content_type") or "").strip()
@@ -375,9 +411,6 @@ def create_clinician_document(payload: dict[str, Any], user: dict[str, Any]) -> 
     file_data_url = (payload.get("file_data_url") or "").strip()
     document_type = _normalize_document_type(payload.get("document_type") or "other")
     file_size = int(payload.get("file_size") or 0)
-
-    if not title:
-        raise ValidationError("Document title is required.")
 
     storage_key = ""
     storage_gridfs_file_id = ""

@@ -397,9 +397,9 @@ def build_doctor_copilot(appointment: dict[str, Any]) -> dict[str, Any]:
     specialty_match = get_specialty_match(
         user_message=" ".join(
             [
-                _clean(appointment.get("reason")),
-                _clean(appointment.get("patient_notes")),
-                _clean(latest_message),
+                _clean_sentence(appointment.get("reason")),
+                _clean_sentence(appointment.get("patient_notes")),
+                _clean_sentence(latest_message),
             ]
         ),
         entities={

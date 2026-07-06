@@ -287,6 +287,9 @@ def store_chat_memory(
 ) -> None:
     if not user or user.get("role") != "patient":
         return
+    user_id = str(user.get("id") or user.get("_id") or "").strip()
+    if not user_id:
+        return
 
     if len((user_message or "").strip()) < MIN_MEMORY_CHARACTERS and not (entities or {}).get("symptoms"):
         return
@@ -302,7 +305,7 @@ def store_chat_memory(
     try:
         create_patient_memory(
             {
-                "user_id": user["id"],
+                "user_id": user_id,
                 "user_name": user.get("name", ""),
                 "user_email": user.get("email", ""),
                 "hospital_id": user.get("hospital_id"),
@@ -337,6 +340,9 @@ def retrieve_patient_memories(
 ) -> dict[str, Any]:
     if not user or user.get("role") != "patient":
         return {"items": [], "summary": "", "model": "hashing-vectorizer-medical-v1"}
+    user_id = str(user.get("id") or user.get("_id") or "").strip()
+    if not user_id:
+        return {"items": [], "summary": "", "model": "hashing-vectorizer-medical-v1"}
 
     query_profile = build_semantic_embedding_profile(
         query,
@@ -344,7 +350,7 @@ def retrieve_patient_memories(
         triage=triage,
         task_type="retrieval_query",
     )
-    memories = list_patient_memories(user["id"], limit=80)
+    memories = list_patient_memories(user_id, limit=80)
     scored_memories: list[dict[str, Any]] = []
 
     for memory in memories:
