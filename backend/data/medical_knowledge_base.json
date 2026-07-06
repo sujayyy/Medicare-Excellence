@@ -1,0 +1,105 @@
+[
+  {
+    "topic": "acidity_reflux",
+    "symptoms": ["acidity", "heartburn", "indigestion", "abdominal pain"],
+    "keywords": ["panipuri", "pani puri", "golgappa", "spicy food", "oily food", "acid reflux"],
+    "body_parts": ["stomach", "abdomen"],
+    "possible_conditions": ["Acidity or reflux", "Food-triggered indigestion", "Stomach irritation"],
+    "general_advice": [
+      "Sip water slowly and avoid more spicy, oily, or fried food for a few hours.",
+      "Try a simple meal such as banana, curd, toast, or plain rice if you feel hungry.",
+      "Stay upright for a while and avoid lying flat right after eating."
+    ],
+    "emergency_warning": [
+      "Get urgent help if the pain feels like chest pressure, spreads to the arm or jaw, or comes with breathlessness.",
+      "Get urgent help if there is repeated vomiting, blood, black stools, or severe worsening pain."
+    ],
+    "follow_up_questions": [
+      "Did this start right after eating?",
+      "Are you having vomiting, loose motions, or chest pressure as well?"
+    ],
+    "clinical_summary": "Common food-triggered acidity usually improves with bland food, fluids, and avoiding irritants, but chest-pressure-style pain should be escalated."
+  },
+  {
+    "topic": "fever_viral",
+    "symptoms": ["fever", "cough", "fatigue", "sore throat"],
+    "keywords": ["temperature", "viral", "body pain", "chills"],
+    "body_parts": ["throat"],
+    "possible_conditions": ["Viral illness", "Upper respiratory infection", "Flu-like illness"],
+    "general_advice": [
+      "Rest, drink fluids, and keep meals light.",
+      "Track temperature if possible and note if symptoms are worsening.",
+      "Arrange review sooner if the fever keeps rising or does not settle."
+    ],
+    "emergency_warning": [
+      "Get urgent help if breathing becomes difficult or the person becomes very weak or confused.",
+      "Get urgent help if the fever is persistent with chest pain or severe dehydration."
+    ],
+    "follow_up_questions": [
+      "How many days has the fever been present?",
+      "Do you also have cough, sore throat, chills, or body aches?"
+    ],
+    "clinical_summary": "Fever with cough or body aches often fits a viral pattern, but longer duration or breathing symptoms should push the case higher."
+  },
+  {
+    "topic": "headache_general",
+    "symptoms": ["headache", "dizziness", "blurred vision"],
+    "keywords": ["migraine", "screen", "dehydration", "stress"],
+    "body_parts": ["head", "eye"],
+    "possible_conditions": ["Tension headache", "Migraine pattern", "Dehydration-related headache"],
+    "general_advice": [
+      "Rest in a quiet place and drink fluids.",
+      "Reduce screen exposure if light makes it worse.",
+      "Arrange medical review if it keeps recurring or gets stronger."
+    ],
+    "emergency_warning": [
+      "Get urgent help if the headache is sudden and severe or comes with weakness or confusion.",
+      "Get urgent help if headache comes with fainting, seizures, or major vision changes."
+    ],
+    "follow_up_questions": [
+      "Did the headache start suddenly or gradually?",
+      "Do you also have nausea, light sensitivity, or vision changes?"
+    ],
+    "clinical_summary": "Many headaches are low risk, but sudden severe pain or neurological features need urgent evaluation."
+  },
+  {
+    "topic": "chest_breathing_urgent",
+    "symptoms": ["chest pain", "shortness of breath", "difficulty breathing"],
+    "keywords": ["sweating", "left arm", "tightness", "breathing issue"],
+    "body_parts": ["chest", "left arm"],
+    "possible_conditions": ["Cardiac-type chest pain", "Respiratory distress", "Other urgent cardiopulmonary concern"],
+    "general_advice": [
+      "Stop activity immediately and seek urgent in-person care.",
+      "Do not rely on home remedies alone for this symptom pattern."
+    ],
+    "emergency_warning": [
+      "Call emergency services now if the pain is severe, spreading, or linked with sweating, faintness, or breathlessness.",
+      "Call emergency services now if the person cannot speak comfortably, collapses, or becomes confused."
+    ],
+    "follow_up_questions": [
+      "Did the chest pain spread to the arm, jaw, back, or shoulder?",
+      "Are you also sweating, dizzy, or unable to breathe properly?"
+    ],
+    "clinical_summary": "Chest pain with breathing symptoms is a red-flag pattern and should be treated as high risk until proven otherwise."
+  },
+  {
+    "topic": "cough_respiratory",
+    "symptoms": ["cough", "shortness of breath", "fever"],
+    "keywords": ["dry cough", "mucus", "cold", "throat"],
+    "body_parts": ["throat", "chest"],
+    "possible_conditions": ["Viral cough", "Airway irritation", "Respiratory infection"],
+    "general_advice": [
+      "Use warm fluids, rest, and avoid smoke or strong irritants.",
+      "Monitor whether the cough is worsening or associated with fever or breathing difficulty."
+    ],
+    "emergency_warning": [
+      "Get urgent help if breathing trouble starts or worsens.",
+      "Get urgent help if there is chest pain, blue lips, or blood in the cough."
+    ],
+    "follow_up_questions": [
+      "Is the cough dry or bringing up mucus?",
+      "How long has the cough been going on?"
+    ],
+    "clinical_summary": "Most coughs are low to moderate risk, but cough with breathing difficulty or chest pain should be escalated."
+  }
+]
