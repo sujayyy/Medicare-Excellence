@@ -4,3 +4,7 @@ __pycache__/
 *.pyc
 .DS_Store
 *.log
+.coverage
+htmlcov/
+.pytest_cache/
+loadtest/results_*.csv

@@ -1,89 +1,89 @@
 {
-  "dataset_size": 12,
+  "dataset_size": 105,
   "embedding_backend": "hashing-vectorizer-medical-v1",
   "transformer_enabled": false,
-  "triage_model_version": "transformer-semantic-triage-v3",
-  "specialty_model_version": "transformer-semantic-specialty-v3",
-  "triage_accuracy": 0.75,
-  "triage_macro_f1": 0.731,
-  "triage_baseline_accuracy": 0.917,
-  "specialty_accuracy": 1.0,
-  "specialty_baseline_accuracy": 0.833,
+  "triage_model_version": "rule-embedding-hybrid-triage-v1",
+  "specialty_model_version": "rule-embedding-hybrid-specialty-v1",
+  "triage_accuracy": 0.419,
+  "triage_macro_f1": 0.33,
+  "triage_baseline_accuracy": 0.467,
+  "specialty_accuracy": 0.714,
+  "specialty_baseline_accuracy": 0.543,
   "triage_confusion_matrix": [
     {
       "label": "Low",
-      "Low": 3,
+      "Low": 30,
       "Medium": 0,
       "High": 0,
       "Critical": 0
     },
     {
       "label": "Medium",
-      "Low": 0,
-      "Medium": 3,
+      "Low": 23,
+      "Medium": 7,
       "High": 0,
       "Critical": 0
     },
     {
       "label": "High",
-      "Low": 0,
-      "Medium": 1,
-      "High": 1,
+      "Low": 14,
+      "Medium": 5,
+      "High": 5,
       "Critical": 1
     },
     {
       "label": "Critical",
-      "Low": 0,
-      "Medium": 0,
-      "High": 1,
+      "Low": 3,
+      "Medium": 6,
+      "High": 9,
       "Critical": 2
     }
   ],
   "sample_predictions": [
     {
-      "text": "I have mild cough and sore throat since yesterday",
-      "expected_triage": "Low",
-      "predicted_triage": "Low",
-      "triage_confidence": 0.73,
-      "expected_specialty": "ent",
-      "predicted_specialty": "ent",
-      "specialty_reason": "ENT matched symptoms like sore throat, throat."
+      "text": "I have sudden severe chest pain spreading to my left arm and I'm sweating heavily",
+      "expected_triage": "Critical",
+      "predicted_triage": "Critical",
+      "triage_confidence": 0.99,
+      "expected_specialty": "cardiology",
+      "predicted_specialty": "cardiology",
+      "specialty_reason": "Cardiology matched symptoms like chest pain, sweating."
     },
     {
-      "text": "I want to book a routine diabetes follow-up",
-      "expected_triage": "Low",
-      "predicted_triage": "Low",
-      "triage_confidence": 0.69,
-      "expected_specialty": "endocrinology",
-      "predicted_specialty": "endocrinology",
-      "specialty_reason": "Endocrinology matched symptoms like diabetes."
+      "text": "Crushing chest pain radiating into my left arm, breaking out in a cold sweat",
+      "expected_triage": "Critical",
+      "predicted_triage": "High",
+      "triage_confidence": 0.97,
+      "expected_specialty": "cardiology",
+      "predicted_specialty": "cardiology",
+      "specialty_reason": "Cardiology matched symptoms like chest pain."
     },
     {
-      "text": "I have headache and dizziness for 2 days",
-      "expected_triage": "Medium",
+      "text": "Severe chest tightness, I cannot breathe, and my left arm feels numb and heavy",
+      "expected_triage": "Critical",
       "predicted_triage": "Medium",
-      "triage_confidence": 0.93,
-      "expected_specialty": "neurology",
-      "predicted_specialty": "neurology",
-      "specialty_reason": "Neurology matched symptoms like headache, dizziness."
+      "triage_confidence": 0.92,
+      "expected_specialty": "cardiology",
+      "predicted_specialty": "cardiology",
+      "specialty_reason": "Cardiology was selected through semantic symptom similarity."
     },
     {
-      "text": "I have fever, cough and body ache since this morning",
-      "expected_triage": "Medium",
+      "text": "I cannot breathe at all and feel like I'm suffocating right now",
+      "expected_triage": "Critical",
       "predicted_triage": "Medium",
-      "triage_confidence": 0.81,
+      "triage_confidence": 0.89,
       "expected_specialty": "pulmonology",
-      "predicted_specialty": "pulmonology",
-      "specialty_reason": "Pulmonology matched symptoms like cough."
+      "predicted_specialty": "general_medicine",
+      "specialty_reason": "General Medicine is the fallback specialty because the symptom pattern is broad."
     },
     {
-      "text": "I have abdominal pain and vomiting for 1 day",
-      "expected_triage": "Medium",
+      "text": "I suddenly can't breathe properly and I'm starting to panic",
+      "expected_triage": "Critical",
       "predicted_triage": "Medium",
-      "triage_confidence": 0.84,
-      "expected_specialty": "gastroenterology",
-      "predicted_specialty": "gastroenterology",
-      "specialty_reason": "Gastroenterology matched symptoms like abdominal pain, vomiting."
+      "triage_confidence": 0.88,
+      "expected_specialty": "pulmonology",
+      "predicted_specialty": "psychiatry",
+      "specialty_reason": "Psychiatry matched symptoms like panic."
     }
   ]
 }

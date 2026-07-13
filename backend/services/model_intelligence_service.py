@@ -7,23 +7,8 @@ from typing import Any
 
 from services.doctor_routing_service import get_specialty_match
 from services.symptom_extraction_service import extract_symptom_entities
+from services.triage_eval_dataset import TRIAGE_DATASET
 from services.triage_service import assess_triage
-
-
-TRIAGE_DATASET: list[dict[str, str]] = [
-    {"text": "I have mild cough and sore throat since yesterday", "triage": "Low", "specialty": "ent"},
-    {"text": "I want to book a routine diabetes follow-up", "triage": "Low", "specialty": "endocrinology"},
-    {"text": "I have headache and dizziness for 2 days", "triage": "Medium", "specialty": "neurology"},
-    {"text": "I have fever, cough and body ache since this morning", "triage": "Medium", "specialty": "pulmonology"},
-    {"text": "I have abdominal pain and vomiting for 1 day", "triage": "Medium", "specialty": "gastroenterology"},
-    {"text": "I have skin rash and itching after food", "triage": "Low", "specialty": "dermatology"},
-    {"text": "I have chest pain and shortness of breath", "triage": "High", "specialty": "cardiology"},
-    {"text": "My blood pressure is high with severe headache and blurred vision", "triage": "High", "specialty": "neurology"},
-    {"text": "I have blood in urine and swelling in my legs", "triage": "High", "specialty": "nephrology"},
-    {"text": "I cannot breathe and feel severe chest pain in my left arm", "triage": "Critical", "specialty": "cardiology"},
-    {"text": "My father had a seizure and is unconscious", "triage": "Critical", "specialty": "neurology"},
-    {"text": "There is heavy bleeding after delivery and she feels faint", "triage": "Critical", "specialty": "gynecology"},
-]
 
 TRIAGE_LABELS = ["Low", "Medium", "High", "Critical"]
 ARTIFACT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "model_artifacts")
@@ -144,8 +129,8 @@ def evaluate_model_stack() -> dict[str, Any]:
         "dataset_size": len(TRIAGE_DATASET),
         "embedding_backend": "gemini-text-embedding-004" if transformer_enabled else "hashing-vectorizer-medical-v1",
         "transformer_enabled": transformer_enabled,
-        "triage_model_version": "transformer-semantic-triage-v3",
-        "specialty_model_version": "transformer-semantic-specialty-v3",
+        "triage_model_version": "rule-embedding-hybrid-triage-v1",
+        "specialty_model_version": "rule-embedding-hybrid-specialty-v1",
         "triage_accuracy": _accuracy(truth_triage, model_triage),
         "triage_macro_f1": _macro_f1(truth_triage, model_triage, TRIAGE_LABELS),
         "triage_baseline_accuracy": _accuracy(truth_triage, baseline_triage),

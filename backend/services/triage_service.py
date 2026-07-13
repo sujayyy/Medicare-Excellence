@@ -231,7 +231,7 @@ def assess_triage(
             "triage_label": "Critical",
             "triage_reason": "The message was explicitly classified as an emergency request.",
             "recommended_action": SEVERITY_ACTIONS["Critical"],
-            "triage_model": "transformer-semantic-triage-v3",
+            "triage_model": "rule-embedding-hybrid-triage-v1",
             "triage_confidence": 0.99,
             "triage_factors": ["Emergency intent was explicitly detected."],
             "triage_evidence": {
@@ -273,7 +273,7 @@ def assess_triage(
             "triage_label": "Low",
             "triage_reason": factors[0],
             "recommended_action": _recommended_action("Low", appointment=True),
-            "triage_model": "transformer-semantic-triage-v3",
+            "triage_model": "rule-embedding-hybrid-triage-v1",
             "triage_confidence": 0.82,
             "triage_factors": factors,
             "triage_evidence": {
@@ -304,7 +304,7 @@ def assess_triage(
         "triage_label": label,
         "triage_reason": _reason_from_factors(label, factors),
         "recommended_action": _recommended_action(label, appointment=appointment),
-        "triage_model": "transformer-semantic-triage-v3",
+        "triage_model": "rule-embedding-hybrid-triage-v1",
         "triage_confidence": round(confidence, 2),
         "triage_factors": factors[:5],
         "semantic_risk_scores": semantic_scores,

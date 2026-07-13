@@ -1,0 +1,41 @@
+name: Backend tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.runCommand({ ping: 1 })'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run test suite with coverage
+        env:
+          MONGO_URI: mongodb://127.0.0.1:27017/
+          MONGO_DB_NAME: MediBotDB_ci
+          FLASK_SECRET_KEY: ci-test-secret
+        run: pytest tests/ -v --cov=services --cov=models --cov=routes --cov-report=term-missing
